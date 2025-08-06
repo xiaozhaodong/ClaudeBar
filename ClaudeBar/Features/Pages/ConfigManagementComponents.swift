@@ -98,7 +98,7 @@ struct CurrentConfigDetailCard: View {
                 ], alignment: .leading, spacing: 16) {
                     ConfigDetailItem(
                         icon: "text.badge.checkmark",
-                        label: "配置名称",
+                        label: "端点名称",
                         value: currentConfig.name,
                         valueColor: .primary
                     )
@@ -119,7 +119,7 @@ struct CurrentConfigDetailCard: View {
                     
                     ConfigDetailItem(
                         icon: "checkmark.shield.fill",
-                        label: "配置状态",
+                        label: "端点状态",
                         value: currentConfig.isValid ? "正常" : "异常",
                         valueColor: currentConfig.isValid ? .green : .red
                     )
@@ -177,18 +177,23 @@ struct CurrentConfigDetailCard: View {
     }
     
     private func openConfigFile() {
-        if let configService = appState.configService as? ConfigService {
-            let configDirectory = URL(fileURLWithPath: configService.configDirectoryPath)
-            let configFileURL = configDirectory.appendingPathComponent("settings.json")
-            NSWorkspace.shared.open(configFileURL)
+        let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
+        let settingsFile = homeDirectory.appendingPathComponent(".claude/settings.json")
+        
+        // 确保文件存在
+        if FileManager.default.fileExists(atPath: settingsFile.path) {
+            NSWorkspace.shared.open(settingsFile)
+        } else {
+            // 如果 settings.json 不存在，打开 api_configs.json
+            let apiConfigFile = homeDirectory.appendingPathComponent(".claude/api_configs.json")
+            NSWorkspace.shared.open(apiConfigFile)
         }
     }
     
     private func openConfigDirectory() {
-        if let configService = appState.configService as? ConfigService {
-            let configDirectory = URL(fileURLWithPath: configService.configDirectoryPath)
-            NSWorkspace.shared.open(configDirectory)
-        }
+        let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
+        let claudeDirectory = homeDirectory.appendingPathComponent(".claude")
+        NSWorkspace.shared.open(claudeDirectory)
     }
 }
 
@@ -233,7 +238,7 @@ struct ConfigurationsList: View {
         VStack(alignment: .leading, spacing: 16) {
             // 列表头部
             HStack {
-                Text("所有配置")
+                Text("所有 API 端点")
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundColor(.primary)
                 
@@ -300,7 +305,7 @@ struct ConfigurationsList: View {
         let containerView = NSView(frame: NSRect(x: 0, y: 0, width: 350, height: 180))
         
         // 配置名称标签和输入框
-        let nameLabel = NSTextField(labelWithString: "配置名称:")
+        let nameLabel = NSTextField(labelWithString: "端点名称:")
         nameLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
         nameLabel.frame = NSRect(x: 0, y: 150, width: 100, height: 17)
         nameLabel.isEditable = false
@@ -351,7 +356,7 @@ struct ConfigurationsList: View {
             
             // 验证输入
             guard !configName.isEmpty else {
-                appState.showErrorMessage("配置名称不能为空")
+                appState.showErrorMessage("端点名称不能为空")
                 return
             }
             
@@ -379,10 +384,10 @@ struct ConfigurationsList: View {
             Task {
                 do {
                     try await appState.configService.createConfig(newConfig)
-                    appState.showSuccessMessage("成功创建配置「\(configName)」")
+                    appState.showSuccessMessage("成功创建 API 端点「\(configName)」")
                     await appState.loadConfigs()
                 } catch {
-                    appState.showErrorMessage("创建配置失败：\(error.localizedDescription)")
+                    appState.showErrorMessage("创建端点失败：\(error.localizedDescription)")
                 }
             }
         }
@@ -584,8 +589,8 @@ struct ConfigManagementRowView: View {
     private func deleteConfig() {
         // 删除配置确认对话框
         let alert = NSAlert()
-        alert.messageText = "删除 API 端点配置"
-        alert.informativeText = "确定要删除配置「\(config.name)」吗？此操作无法撤销。"
+        alert.messageText = "删除 API 端点"
+        alert.informativeText = "确定要删除 API 端点「\(config.name)」吗？此操作无法撤销。"
         alert.alertStyle = .warning
         alert.addButton(withTitle: "删除")
         alert.addButton(withTitle: "取消")
@@ -595,10 +600,10 @@ struct ConfigManagementRowView: View {
             Task {
                 do {
                     try await appState.configService.deleteConfig(config)
-                    appState.showSuccessMessage("已删除配置「\(config.name)」")
+                    appState.showSuccessMessage("已删除 API 端点「\(config.name)」")
                     await appState.loadConfigs()
                 } catch {
-                    appState.showErrorMessage("删除配置失败：\(error.localizedDescription)")
+                    appState.showErrorMessage("删除端点失败：\(error.localizedDescription)")
                 }
             }
         }
@@ -625,21 +630,20 @@ struct ConfigListEmptyView: View {
                 .foregroundColor(.secondary)
             
             VStack(spacing: 8) {
-                Text("没有找到配置文件")
+                Text("没有找到 API 端点")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(.primary)
                 
-                Text("请在 ~/.claude 目录中创建配置文件")
+                Text("请在 ~/.claude 目录中创建 API 端点配置")
                     .font(.system(size: 14))
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
             }
             
-            Button("打开配置目录") {
-                if let configService = appState.configService as? ConfigService {
-                    let configDirectory = URL(fileURLWithPath: configService.configDirectoryPath)
-                    NSWorkspace.shared.open(configDirectory)
-                }
+            Button("打开目录") {
+                let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
+                let claudeDirectory = homeDirectory.appendingPathComponent(".claude")
+                NSWorkspace.shared.open(claudeDirectory)
             }
             .buttonStyle(.bordered)
             .controlSize(.large)

@@ -121,7 +121,7 @@ class ModernConfigService: ConfigServiceProtocol {
         apiConfigsData.current = configName
         
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         let data = try encoder.encode(apiConfigsData)
         try data.write(to: apiConfigsFile)
     }
@@ -145,7 +145,7 @@ class ModernConfigService: ConfigServiceProtocol {
             "includeCoAuthoredBy": config.includeCoAuthoredBy ?? false
         ]
         
-        let jsonData = try JSONSerialization.data(withJSONObject: settingsData, options: [.prettyPrinted, .sortedKeys])
+        let jsonData = try JSONSerialization.data(withJSONObject: settingsData, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         try jsonData.write(to: settingsFile)
     }
     
@@ -193,7 +193,7 @@ class ModernConfigService: ConfigServiceProtocol {
         
         // 保存更新后的配置
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         let data = try encoder.encode(apiConfigsData)
         try data.write(to: apiConfigsFile)
     }
@@ -238,7 +238,7 @@ class ModernConfigService: ConfigServiceProtocol {
         
         // 保存更新后的配置
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         let updatedData = try encoder.encode(apiConfigsData)
         try updatedData.write(to: apiConfigsFile)
     }
@@ -389,7 +389,7 @@ extension ModernConfigService {
         // 保存新的配置文件
         if migratedCount > 0 {
             let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
             let data = try encoder.encode(apiConfigsData)
             try data.write(to: apiConfigsFile)
             
