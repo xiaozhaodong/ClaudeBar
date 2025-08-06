@@ -256,12 +256,16 @@ class UsageService: UsageServiceProtocol, ObservableObject {
             Logger.shared.info("✅ entries数组大小正常：\(entries.count)条")
         }
         
-        // 添加诊断信息
+        // Phase 1: 添加详细的数据诊断信息
         var messageTypeDistribution: [String: Int] = [:]
         var modelDistribution: [String: Int] = [:]
         var entriesWithUsage = 0
         var entriesWithCost = 0
+        var validCostEntries = 0  // 有成本的条目数
+        var zeroCostEntries = 0   // 零成本条目数
+        var totalCalculatedCost: Double = 0
         
+        // Phase 1: 预计算所有条目的成本进行诊断
         for entry in entries {
             messageTypeDistribution[entry.messageType] = (messageTypeDistribution[entry.messageType] ?? 0) + 1
             modelDistribution[entry.model] = (modelDistribution[entry.model] ?? 0) + 1
@@ -271,11 +275,41 @@ class UsageService: UsageServiceProtocol, ObservableObject {
             if entry.cost > 0 {
                 entriesWithCost += 1
             }
+            
+            // Phase 1: 诊断成本计算
+            let calculatedCost = PricingModel.shared.calculateCost(
+                model: entry.model,
+                inputTokens: entry.inputTokens,
+                outputTokens: entry.outputTokens,
+                cacheCreationTokens: entry.cacheCreationTokens,
+                cacheReadTokens: entry.cacheReadTokens
+            )
+            
+            if calculatedCost > 0 {
+                validCostEntries += 1
+            } else {
+                zeroCostEntries += 1
+                if zeroCostEntries <= 10 {  // 只记录前10个零成本条目
+                    Logger.shared.debug("⚠️ 零成本条目: model=\(entry.model), tokens=\(entry.totalTokens)")
+                }
+            }
+            
+            totalCalculatedCost += calculatedCost
         }
         
         Logger.shared.debug("消息类型分布: \(messageTypeDistribution)")
         Logger.shared.debug("模型分布: \(modelDistribution)")
         Logger.shared.debug("有使用数据的条目: \(entriesWithUsage), 有成本数据的条目: \(entriesWithCost)")
+        
+        // Phase 1: 输出成本诊断信息
+        Logger.shared.debug("💰 成本计算统计:")
+        Logger.shared.debug("- 总条目数: \(entries.count)")
+        Logger.shared.debug("- 有成本条目: \(validCostEntries)")
+        Logger.shared.debug("- 零成本条目: \(zeroCostEntries)")
+        Logger.shared.debug("- 预计算总成本: $\(String(format: "%.6f", totalCalculatedCost))")
+        if validCostEntries > 0 {
+            Logger.shared.debug("- 有效条目平均成本: $\(String(format: "%.6f", totalCalculatedCost / Double(validCostEntries)))")
+        }
         
         // 完全基于测试脚本验证成功的ccusage去重策略实现
         // 参考测试脚本第616-730行的成功经验
@@ -381,7 +415,9 @@ class UsageService: UsageServiceProtocol, ObservableObject {
         Logger.shared.debug("📊 重复记录: \(duplicateCount) 条，重复tokens: \(formatNumber(duplicateTokens))")
         Logger.shared.debug("📊 跳过的null记录: \(skippedNullCount) 条 (messageId或requestId为空)")
         
-        // 处理最终选定的数据条目
+        // Phase 2: 处理最终选定的数据条目并统计有效成本条目
+        var effectiveRequestCount = 0  // 有效请求数（有成本的条目数）
+        
         for entry in finalEntries {
             validEntries.append(entry)
 
@@ -393,6 +429,13 @@ class UsageService: UsageServiceProtocol, ObservableObject {
                 cacheCreationTokens: entry.cacheCreationTokens,
                 cacheReadTokens: entry.cacheReadTokens
             )
+
+            // Phase 2: 只统计有成本的条目为有效请求
+            if calculatedCost > 0 {
+                effectiveRequestCount += 1
+            } else {
+                Logger.shared.debug("⚠️ 跳过零成本条目: model=\(entry.model), tokens=\(entry.totalTokens)")
+            }
 
             // 更新总计
             totalCost += calculatedCost  // 使用计算的成本而不是 entry.cost
@@ -411,15 +454,20 @@ class UsageService: UsageServiceProtocol, ObservableObject {
             updateProjectStats(&projectStats, with: entry)
         }
         
-        // 请求数是去重后的有效条目数
+        // 修正：平均请求成本应该使用总的条目数，而不是只统计有成本的条目
+        // 这样才能反映真实的请求处理情况
         let totalRequests = validEntries.count
+        
         // 根据 ccusage 标准，总 token 包括所有类型：input + output + cache_creation + cache_read
         let totalTokens = totalInputTokens + totalOutputTokens + totalCacheCreationTokens + totalCacheReadTokens
         
         Logger.shared.debug("🎯 最终统计结果：")
         Logger.shared.debug("- 总会话数: \(allSessionIds.count)（基于原始数据唯一session_id）")
-        Logger.shared.debug("- 总请求数: \(totalRequests)（智能去重后的有效条目）")
-        Logger.shared.debug("- 总成本: $\(String(format: "%.2f", totalCost))")
+        Logger.shared.debug("- 总请求数: \(totalRequests)（所有有效条目）")
+        Logger.shared.debug("- 有成本的条目: \(effectiveRequestCount)")
+        Logger.shared.debug("- 零成本的条目: \(zeroCostEntries)")
+        Logger.shared.debug("- 总成本: $\(String(format: "%.6f", totalCost))")
+        Logger.shared.debug("- 平均每请求成本: $\(String(format: "%.6f", totalRequests > 0 ? totalCost / Double(totalRequests) : 0))")
         Logger.shared.debug("- 总令牌: \(formatNumber(totalTokens))")
         Logger.shared.debug("- Input: \(formatNumber(totalInputTokens)), Output: \(formatNumber(totalOutputTokens)), Cache: \(formatNumber(totalCacheCreationTokens))+\(formatNumber(totalCacheReadTokens))")
         
@@ -438,14 +486,34 @@ class UsageService: UsageServiceProtocol, ObservableObject {
             Logger.shared.warning("🔴 差异较大(\(String(format: "%.2f", percentDiff))%)，需要重新审查过滤策略")
         }
         
-        // 数据一致性检查
-        if allSessionIds.count > totalRequests {
-            Logger.shared.info("⚠️ 会话数(\(allSessionIds.count)) > 请求数(\(totalRequests))，这可能是因为某些会话中的所有请求都被去重过滤掉了")
+        // Phase 3: 添加数据一致性验证
+        Logger.shared.debug("📊 数据一致性验证:")
+        let modelRequestsSum = modelStats.values.map { $0.build().requestCount ?? 0 }.reduce(0, +)
+        Logger.shared.debug("- 总请求数: \(totalRequests)")
+        Logger.shared.debug("- 各模型请求数之和: \(modelRequestsSum)")
+        Logger.shared.debug("- 数据一致性: \(modelRequestsSum == totalRequests ? "✅ 一致" : "⚠️ 不一致")")
+        
+        if modelRequestsSum != totalRequests {
+            Logger.shared.warning("⚠️ 数据不一致：模型请求数之和(\(modelRequestsSum)) != 总请求数(\(totalRequests))")
         }
         
-        // 记录去重效果
+        // Phase 2: 数据一致性检查和诊断
+        if allSessionIds.count > totalRequests {
+            Logger.shared.info("⚠️ 会话数(\(allSessionIds.count)) > 请求数(\(totalRequests))，这可能是因为某些会话中的所有请求都被去重过滤掉了或成本为零")
+        }
+        
+        if effectiveRequestCount != validEntries.count {
+            let zeroRequestCount = validEntries.count - effectiveRequestCount
+            Logger.shared.info("⚠️ 发现 \(zeroRequestCount) 个零成本条目，已从平均成本计算中排除")
+            Logger.shared.info("    这些条目可能是无法识别的模型或测试数据")
+        }
+        
+        // Phase 2: 记录去重和成本计算效果
         let dedupeRatio = Double(entries.count - validEntries.count) / Double(entries.count) * 100
-        Logger.shared.debug("📊 去重效果: 原始条目 \(entries.count)，有效条目 \(validEntries.count)，去重率 \(String(format: "%.2f", dedupeRatio))%")
+        let costEffectiveRatio = Double(effectiveRequestCount) / Double(validEntries.count) * 100
+        Logger.shared.debug("📊 数据处理效果:")
+        Logger.shared.debug("    去重效果: 原始条目 \(entries.count) → 有效条目 \(validEntries.count)，去重率 \(String(format: "%.2f", dedupeRatio))%")
+        Logger.shared.debug("    成本有效率: 有效条目 \(validEntries.count) → 有成本条目 \(effectiveRequestCount)，成本有效率 \(String(format: "%.2f", costEffectiveRatio))%")
         
         return UsageStatistics(
             totalCost: totalCost,
@@ -455,7 +523,7 @@ class UsageService: UsageServiceProtocol, ObservableObject {
             totalCacheCreationTokens: totalCacheCreationTokens,
             totalCacheReadTokens: totalCacheReadTokens,
             totalSessions: allSessionIds.count,  // 使用原始数据的唯一会话数
-            totalRequests: totalRequests,
+            totalRequests: totalRequests,  // Phase 2: 使用有效请求数（有成本的条目数）
             byModel: modelStats.values.map { $0.build() }.sorted { $0.totalCost > $1.totalCost },
             byDate: dateStats.values.map { $0.build() }.sorted { $0.date < $1.date },
             byProject: projectStats.values.map { $0.build() }.sorted { $0.totalCost > $1.totalCost }
@@ -464,6 +532,12 @@ class UsageService: UsageServiceProtocol, ObservableObject {
     
     /// 更新模型统计
     private func updateModelStats(_ modelStats: inout [String: ModelUsageBuilder], with entry: UsageEntry) {
+        // Phase 2: 在统计层面过滤无效模型
+        guard !entry.model.isEmpty && entry.model != "unknown" && entry.model != "<synthetic>" else {
+            Logger.shared.debug("⚠️  跳过统计 - 无效模型: '\(entry.model)', tokens=\(entry.totalTokens)")
+            return
+        }
+        
         if modelStats[entry.model] == nil {
             modelStats[entry.model] = ModelUsageBuilder(model: entry.model)
         }
@@ -689,8 +763,8 @@ private class ModelUsageBuilder {
     }
     
     func build() -> ModelUsage {
-        // 请求数优先使用唯一请求ID数量，否则使用条目数量
-        let requestCount = requestIds.count > 0 ? requestIds.count : entryCount
+        // 统一使用条目数，与总请求数计算保持一致
+        let requestCount = entryCount
         
         return ModelUsage(
             model: model,
@@ -785,8 +859,8 @@ private class ProjectUsageBuilder {
     }
     
     func build() -> ProjectUsage {
-        // 请求数优先使用唯一请求ID数量，否则使用条目数量
-        let requestCount = requestIds.count > 0 ? requestIds.count : entryCount
+        // 统一使用条目数，与总请求数和模型统计保持一致
+        let requestCount = entryCount
         
         return ProjectUsage(
             projectPath: projectPath,

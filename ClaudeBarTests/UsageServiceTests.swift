@@ -337,7 +337,8 @@ private class TestModelUsage {
     }
     
     func build() -> ModelUsage {
-        let requestCount = requestIds.count > 0 ? requestIds.count : entryCount
+        // 统一使用条目数，与主要代码保持一致
+        let requestCount = entryCount
         
         return ModelUsage(
             model: model,
@@ -385,7 +386,8 @@ private class TestProjectUsage {
     }
     
     func build() -> ProjectUsage {
-        let requestCount = requestIds.count > 0 ? requestIds.count : entryCount
+        // 统一使用条目数，与主要代码保持一致
+        let requestCount = entryCount
         
         return ProjectUsage(
             projectPath: projectPath,

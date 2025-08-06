@@ -96,6 +96,7 @@ class PricingModel {
     ///   - cacheCreationTokens: 缓存创建令牌数
     ///   - cacheReadTokens: 缓存读取令牌数
     /// - Returns: 总成本（美元）
+    /// Phase 4: 改进的成本计算方法
     func calculateCost(
         model: String,
         inputTokens: Int,
@@ -104,9 +105,11 @@ class PricingModel {
         cacheReadTokens: Int
     ) -> Double {
         let modelKey = normalizeModelName(model)
+        let totalTokens = inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens
         
         guard let modelPricing = pricing[modelKey] else {
-            Logger.shared.warning("未知模型定价: \(model)，成本设为 $0")
+            // Phase 4: 改进：提供更详细的日志和统计
+            print("❓ 未知模型定价: '\(model)' -> '\(modelKey)', tokens=\(totalTokens)")
             return 0.0
         }
         
@@ -115,7 +118,14 @@ class PricingModel {
         let cacheWriteCost = Double(cacheCreationTokens) / 1_000_000 * modelPricing.cacheWrite
         let cacheReadCost = Double(cacheReadTokens) / 1_000_000 * modelPricing.cacheRead
         
-        return inputCost + outputCost + cacheWriteCost + cacheReadCost
+        let totalCost = inputCost + outputCost + cacheWriteCost + cacheReadCost
+        
+        // Phase 4: 调试信息：记录计算详情（只在成本 > 0 时输出）
+        if totalCost > 0 {
+            print("💵 成本计算: \(model) -> $\(String(format: "%.6f", totalCost)) (I:\(inputTokens) O:\(outputTokens) CW:\(cacheCreationTokens) CR:\(cacheReadTokens))")
+        }
+        
+        return totalCost
     }
     
     /// 获取模型的定价信息

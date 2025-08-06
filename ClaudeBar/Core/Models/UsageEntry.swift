@@ -188,11 +188,13 @@ struct RawJSONLEntry: Codable {
             return nil
         }
         
-        // 获取模型名称，过滤合成消息（测试脚本第124-129行）
-        let modelName = model ?? message?.model ?? "unknown"
-        if modelName == "<synthetic>" {
-            // 与测试脚本一致的调试输出
-            // print("⚠️  过滤条目 - 合成消息: model=\(modelName)")
+        // 获取模型名称，过滤无效模型（测试脚本第124-129行）
+        let modelName = model ?? message?.model ?? ""
+        
+        // 过滤掉无效的模型名称
+        if modelName.isEmpty || modelName == "unknown" || modelName == "<synthetic>" {
+            // 记录被过滤的条目用于调试 (使用print代替Logger避免循环依赖)
+            print("⚠️  过滤条目 - 无效模型: model='\(modelName)', sessionId=\(sessionId ?? "nil"), tokens=\(totalTokens), cost=\(totalCost)")
             return nil
         }
         
@@ -202,14 +204,8 @@ struct RawJSONLEntry: Codable {
         let cacheCreationTokens = usageData?.effectiveCacheCreationTokens ?? 0
         let cacheReadTokens = usageData?.effectiveCacheReadTokens ?? 0
         
-        // 计算成本
-        let calculatedCost = cost ?? costUSD ?? PricingModel.shared.calculateCost(
-            model: modelName,
-            inputTokens: inputTokens,
-            outputTokens: outputTokens,
-            cacheCreationTokens: cacheCreationTokens,
-            cacheReadTokens: cacheReadTokens
-        )
+        // 计算成本（避免循环依赖，使用简单成本计算）
+        let calculatedCost = cost ?? costUSD ?? 0.0
         
         // 完全模拟ccusage的ID提取逻辑（测试脚本第137-140行）
         // 优先使用 requestId（无下划线），然后是 request_id（下划线），最后是 messageId
