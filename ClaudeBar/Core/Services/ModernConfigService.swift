@@ -121,7 +121,7 @@ class ModernConfigService: ConfigServiceProtocol {
         apiConfigsData.current = configName
         
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let data = try encoder.encode(apiConfigsData)
         try data.write(to: apiConfigsFile)
     }
@@ -129,7 +129,87 @@ class ModernConfigService: ConfigServiceProtocol {
     /// 更新 settings.json 文件
     /// 遵循 DRY 原则：消除重复的配置更新逻辑
     private func updateSettingsFile(_ config: ClaudeConfig) throws {
-        // 创建基础 settings.json 结构
+        // 检查文件是否存在
+        guard fileManager.fileExists(atPath: settingsFile.path) else {
+            // 如果文件不存在，创建新的配置文件（使用原来的方式）
+            try createNewSettingsFile(config)
+            return
+        }
+        
+        // 读取现有文件内容
+        let originalContent = try String(contentsOf: settingsFile, encoding: .utf8)
+        
+        // 使用文本替换方式更新各个字段，保持原始格式
+        var updatedContent = originalContent
+        
+        // 更新 ANTHROPIC_AUTH_TOKEN
+        if let token = config.env.anthropicAuthToken {
+            updatedContent = try updateJSONField(
+                in: updatedContent,
+                field: "ANTHROPIC_AUTH_TOKEN",
+                value: token
+            )
+        }
+        
+        // 更新 ANTHROPIC_BASE_URL
+        if let baseURL = config.env.anthropicBaseURL {
+            updatedContent = try updateJSONField(
+                in: updatedContent,
+                field: "ANTHROPIC_BASE_URL",
+                value: baseURL
+            )
+        }
+        
+        // 更新 CLAUDE_CODE_MAX_OUTPUT_TOKENS
+        if let maxTokens = config.env.claudeCodeMaxOutputTokens {
+            updatedContent = try updateJSONField(
+                in: updatedContent,
+                field: "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+                value: maxTokens
+            )
+        }
+        
+        // 更新 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+        if let disableTraffic = config.env.claudeCodeDisableNonessentialTraffic {
+            updatedContent = try updateJSONField(
+                in: updatedContent,
+                field: "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+                value: disableTraffic
+            )
+        }
+        
+        // 原子性写回文件
+        try updatedContent.write(to: settingsFile, atomically: true, encoding: .utf8)
+    }
+    
+    /// 使用正则表达式精确替换JSON字段值，保持原始格式
+    private func updateJSONField(in content: String, field: String, value: String) throws -> String {
+        // 转义JSON值中的特殊字符
+        let escapedValue = value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        
+        // 构建正则表达式：匹配字段名和其值，但保持原始格式
+        let pattern = "(\"\(field)\"\\s*:\\s*\")([^\"]*)(\")"
+        let replacement = "$1\(escapedValue)$3"
+        
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            throw ConfigManagerError.parseError("无法创建正则表达式用于字段 \(field)")
+        }
+        
+        let range = NSRange(location: 0, length: content.utf16.count)
+        let updatedContent = regex.stringByReplacingMatches(
+            in: content,
+            options: [],
+            range: range,
+            withTemplate: replacement
+        )
+        
+        return updatedContent
+    }
+    
+    /// 创建新的 settings.json 文件（当文件不存在时使用）
+    private func createNewSettingsFile(_ config: ClaudeConfig) throws {
         let settingsData: [String: Any] = [
             "env": [
                 "ANTHROPIC_AUTH_TOKEN": config.env.anthropicAuthToken ?? "",
@@ -145,7 +225,7 @@ class ModernConfigService: ConfigServiceProtocol {
             "includeCoAuthoredBy": config.includeCoAuthoredBy ?? false
         ]
         
-        let jsonData = try JSONSerialization.data(withJSONObject: settingsData, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+        let jsonData = try JSONSerialization.data(withJSONObject: settingsData, options: [.sortedKeys, .withoutEscapingSlashes])
         try jsonData.write(to: settingsFile)
     }
     
@@ -193,7 +273,7 @@ class ModernConfigService: ConfigServiceProtocol {
         
         // 保存更新后的配置
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let data = try encoder.encode(apiConfigsData)
         try data.write(to: apiConfigsFile)
     }
@@ -238,7 +318,7 @@ class ModernConfigService: ConfigServiceProtocol {
         
         // 保存更新后的配置
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let updatedData = try encoder.encode(apiConfigsData)
         try updatedData.write(to: apiConfigsFile)
     }
@@ -389,7 +469,7 @@ extension ModernConfigService {
         // 保存新的配置文件
         if migratedCount > 0 {
             let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
             let data = try encoder.encode(apiConfigsData)
             try data.write(to: apiConfigsFile)
             
