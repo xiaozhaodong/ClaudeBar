@@ -120,11 +120,6 @@ class PricingModel {
         
         let totalCost = inputCost + outputCost + cacheWriteCost + cacheReadCost
         
-        // Phase 4: 调试信息：记录计算详情（只在成本 > 0 时输出）
-        if totalCost > 0 {
-            print("💵 成本计算: \(model) -> $\(String(format: "%.6f", totalCost)) (I:\(inputTokens) O:\(outputTokens) CW:\(cacheCreationTokens) CR:\(cacheReadTokens))")
-        }
-        
         return totalCost
     }
     

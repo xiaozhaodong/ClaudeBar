@@ -238,136 +238,23 @@ class UsageService: UsageServiceProtocol, ObservableObject {
             allSessionIds.insert(entry.sessionId)
         }
         
-        // 处理数据条目 - 不进行去重以匹配 ccusage 统计结果
-        var validEntries: [UsageEntry] = []
-        
-        Logger.shared.debug("🔍 开始处理 \(entries.count) 条原始数据条目，发现 \(allSessionIds.count) 个唯一会话")
-        
-        // 紧急调试：如果entries太少，这就是问题所在
+        // 检查数据量
         if entries.count < 100 {
             Logger.shared.error("❌ 关键问题：传入的entries数组只有\(entries.count)条，这远少于预期的数千条")
             Logger.shared.error("   这说明JSONL解析阶段出现了严重问题，大部分数据没有被成功解析")
-            
-            // 显示前几个条目的详细信息
-            for (index, entry) in entries.prefix(5).enumerated() {
-                Logger.shared.debug("   条目\(index + 1): sessionId=\(entry.sessionId), model=\(entry.model), tokens=\(entry.totalTokens)")
-            }
         } else {
             Logger.shared.info("✅ entries数组大小正常：\(entries.count)条")
         }
         
-        // Phase 1: 添加详细的数据诊断信息
-        var messageTypeDistribution: [String: Int] = [:]
-        var modelDistribution: [String: Int] = [:]
-        var entriesWithUsage = 0
-        var entriesWithCost = 0
-        var validCostEntries = 0  // 有成本的条目数
-        var zeroCostEntries = 0   // 零成本条目数
-        var totalCalculatedCost: Double = 0
+        Logger.shared.debug("🧹 开始激进去重逻辑处理")
         
-        // Phase 1: 预计算所有条目的成本进行诊断
-        for entry in entries {
-            messageTypeDistribution[entry.messageType] = (messageTypeDistribution[entry.messageType] ?? 0) + 1
-            modelDistribution[entry.model] = (modelDistribution[entry.model] ?? 0) + 1
-            if entry.inputTokens > 0 || entry.outputTokens > 0 || entry.cacheCreationTokens > 0 || entry.cacheReadTokens > 0 {
-                entriesWithUsage += 1
-            }
-            if entry.cost > 0 {
-                entriesWithCost += 1
-            }
-            
-            // Phase 1: 诊断成本计算
-            let calculatedCost = PricingModel.shared.calculateCost(
-                model: entry.model,
-                inputTokens: entry.inputTokens,
-                outputTokens: entry.outputTokens,
-                cacheCreationTokens: entry.cacheCreationTokens,
-                cacheReadTokens: entry.cacheReadTokens
-            )
-            
-            if calculatedCost > 0 {
-                validCostEntries += 1
-            } else {
-                zeroCostEntries += 1
-                if zeroCostEntries <= 10 {  // 只记录前10个零成本条目
-                    Logger.shared.debug("⚠️ 零成本条目: model=\(entry.model), tokens=\(entry.totalTokens)")
-                }
-            }
-            
-            totalCalculatedCost += calculatedCost
-        }
-        
-        Logger.shared.debug("消息类型分布: \(messageTypeDistribution)")
-        Logger.shared.debug("模型分布: \(modelDistribution)")
-        Logger.shared.debug("有使用数据的条目: \(entriesWithUsage), 有成本数据的条目: \(entriesWithCost)")
-        
-        // Phase 1: 输出成本诊断信息
-        Logger.shared.debug("💰 成本计算统计:")
-        Logger.shared.debug("- 总条目数: \(entries.count)")
-        Logger.shared.debug("- 有成本条目: \(validCostEntries)")
-        Logger.shared.debug("- 零成本条目: \(zeroCostEntries)")
-        Logger.shared.debug("- 预计算总成本: $\(String(format: "%.6f", totalCalculatedCost))")
-        if validCostEntries > 0 {
-            Logger.shared.debug("- 有效条目平均成本: $\(String(format: "%.6f", totalCalculatedCost / Double(validCostEntries)))")
-        }
-        
-        // 完全基于测试脚本验证成功的ccusage去重策略实现
-        // 参考测试脚本第616-730行的成功经验
-        Logger.shared.debug("🧹 实施完全ccusage风格的去重逻辑")
-        
-        // 策略1: 测试无去重的情况（测试脚本第619-625行）
-        Logger.shared.debug("🧪 测试策略1: 不进行去重，统计原始数据")
-        var noDedupeTotal = 0
-        for entry in entries {
-            noDedupeTotal += entry.totalTokens
-        }
-        Logger.shared.debug("📊 无去重情况下的总tokens: \(formatNumber(noDedupeTotal))")
-        
-        // 策略2: ccusage风格的温和去重逻辑（测试脚本第627-661行）
-        Logger.shared.debug("🧪 测试策略2a: 只对完全相同的条目进行去重")
-        var gentleUniqueEntries: [String: UsageEntry] = [:]
-        var gentleDuplicateCount = 0
-        var gentleDuplicateTokens = 0
-        
-        for entry in entries {
-            let totalEntryTokens = entry.inputTokens + entry.outputTokens + entry.cacheCreationTokens + entry.cacheReadTokens
-            
-            // 更严格的去重键：要求多个字段完全匹配才认为是重复（测试脚本第640行）
-            let strictKey = "\(entry.timestamp):\(entry.model):\(totalEntryTokens):\(entry.sessionId)"
-            
-            if gentleUniqueEntries[strictKey] != nil {
-                // 只有在时间戳、模型、token数量、会话ID都相同时才认为是重复
-                gentleDuplicateCount += 1
-                gentleDuplicateTokens += totalEntryTokens
-                if gentleDuplicateCount <= 5 {
-                    Logger.shared.debug("🔍 发现严格重复记录: \(strictKey.prefix(80))... (\(totalEntryTokens) tokens)")
-                }
-            } else {
-                gentleUniqueEntries[strictKey] = entry
-            }
-        }
-        
-        Logger.shared.debug("📊 温和去重统计: 原始 \(entries.count) 条，去重后 \(gentleUniqueEntries.count) 条")
-        Logger.shared.debug("📊 温和去重移除: \(gentleDuplicateCount) 条，tokens: \(formatNumber(gentleDuplicateTokens))")
-        
-        var gentleTotal = 0
-        for entry in gentleUniqueEntries.values {
-            gentleTotal += entry.totalTokens
-        }
-        Logger.shared.debug("📊 温和去重后总tokens: \(formatNumber(gentleTotal))")
-        
-        // 策略3: 激进去重逻辑对比（测试脚本第663-730行）
-        Logger.shared.debug("🧹 对比：激进去重逻辑")
-        
+        // 激进去重逻辑：基于 messageId + requestId
         var uniqueEntries: [String: UsageEntry] = [:]
         var duplicateCount = 0
-        var duplicateTokens = 0
         var skippedNullCount = 0
         
         for entry in entries {
-            let totalEntryTokens = entry.inputTokens + entry.outputTokens + entry.cacheCreationTokens + entry.cacheReadTokens
-
-            // 完全模拟ccusage的createUniqueHash逻辑（测试脚本第674-681行）
+            // 完全模拟ccusage的createUniqueHash逻辑
             var uniqueKey: String?
 
             // 只有当同时有messageId和requestId时才创建去重键
@@ -380,48 +267,28 @@ class UsageService: UsageServiceProtocol, ObservableObject {
             if let finalUniqueKey = uniqueKey {
                 if uniqueEntries[finalUniqueKey] != nil {
                     duplicateCount += 1
-                    duplicateTokens += totalEntryTokens
                     continue // 跳过重复条目
                 } else {
                     uniqueEntries[finalUniqueKey] = entry
                 }
             } else {
                 // 没有完整ID的条目直接添加，不去重
-                let fallbackKey = "\(entry.timestamp):\(entry.model):\(totalEntryTokens):\(UUID().uuidString)"
+                let fallbackKey = "\(entry.timestamp):\(entry.model):\(entry.totalTokens):\(UUID().uuidString)"
                 uniqueEntries[fallbackKey] = entry
                 skippedNullCount += 1
             }
         }
         
-        // 决定使用哪种去重策略（测试脚本第700-730行）
-        let ccusageTarget = 1208150693  // 最新的ccusage统计结果 (2025-08-05 再次更新)
-        let noDedupeDistance = abs(noDedupeTotal - ccusageTarget)
-        let gentleDistance = abs(gentleTotal - ccusageTarget)
-        let aggressiveTotal = uniqueEntries.values.reduce(0) { $0 + $1.totalTokens }
-        let aggressiveDistance = abs(aggressiveTotal - ccusageTarget)
-        
-        Logger.shared.debug("🎯 去重策略比较:")
-        Logger.shared.debug("无去重: \(formatNumber(noDedupeTotal)) (距离ccusage: \(formatNumber(noDedupeDistance)))")
-        Logger.shared.debug("温和去重: \(formatNumber(gentleTotal)) (距离ccusage: \(formatNumber(gentleDistance)))")
-        Logger.shared.debug("激进去重: \(formatNumber(aggressiveTotal)) (距离ccusage: \(formatNumber(aggressiveDistance)))")
-        
-        // 强制使用激进去重策略（与测试脚本保持一致）
-        Logger.shared.debug("✅ 选择激进去重策略（与测试脚本一致）")
         let finalEntries = Array(uniqueEntries.values)
-        let selectedStrategy = "aggressive"
         
-        Logger.shared.debug("📊 最终选择策略: \(selectedStrategy)，条目数: \(finalEntries.count)")
         Logger.shared.debug("📊 去重统计: 原始 \(entries.count) 条，去重后 \(finalEntries.count) 条")
-        Logger.shared.debug("📊 重复记录: \(duplicateCount) 条，重复tokens: \(formatNumber(duplicateTokens))")
-        Logger.shared.debug("📊 跳过的null记录: \(skippedNullCount) 条 (messageId或requestId为空)")
+        Logger.shared.debug("📊 重复记录: \(duplicateCount) 条，跳过的null记录: \(skippedNullCount) 条")
         
-        // Phase 2: 处理最终选定的数据条目并统计有效成本条目
+        // 处理去重后的数据条目
         var effectiveRequestCount = 0  // 有效请求数（有成本的条目数）
         
         for entry in finalEntries {
-            validEntries.append(entry)
-
-            // 使用定价模型计算成本（与 ccusage 一致）
+            // 使用定价模型计算成本（与 ccusage 一致）- 只计算一次
             let calculatedCost = PricingModel.shared.calculateCost(
                 model: entry.model,
                 inputTokens: entry.inputTokens,
@@ -430,90 +297,49 @@ class UsageService: UsageServiceProtocol, ObservableObject {
                 cacheReadTokens: entry.cacheReadTokens
             )
 
-            // Phase 2: 只统计有成本的条目为有效请求
             if calculatedCost > 0 {
                 effectiveRequestCount += 1
-            } else {
-                Logger.shared.debug("⚠️ 跳过零成本条目: model=\(entry.model), tokens=\(entry.totalTokens)")
             }
 
             // 更新总计
-            totalCost += calculatedCost  // 使用计算的成本而不是 entry.cost
+            totalCost += calculatedCost
             totalInputTokens += entry.inputTokens
             totalOutputTokens += entry.outputTokens
             totalCacheCreationTokens += entry.cacheCreationTokens
             totalCacheReadTokens += entry.cacheReadTokens
             
-            // 按模型统计
-            updateModelStats(&modelStats, with: entry)
+            // 按模型统计 - 传递预计算的成本
+            updateModelStats(&modelStats, with: entry, calculatedCost: calculatedCost)
             
-            // 按日期统计
-            updateDateStats(&dateStats, with: entry)
+            // 按日期统计 - 传递预计算的成本
+            updateDateStats(&dateStats, with: entry, calculatedCost: calculatedCost)
             
-            // 按项目统计
-            updateProjectStats(&projectStats, with: entry)
+            // 按项目统计 - 传递预计算的成本
+            updateProjectStats(&projectStats, with: entry, calculatedCost: calculatedCost)
         }
         
-        // 修正：平均请求成本应该使用总的条目数，而不是只统计有成本的条目
-        // 这样才能反映真实的请求处理情况
-        let totalRequests = validEntries.count
-        
-        // 根据 ccusage 标准，总 token 包括所有类型：input + output + cache_creation + cache_read
+        let totalRequests = finalEntries.count
         let totalTokens = totalInputTokens + totalOutputTokens + totalCacheCreationTokens + totalCacheReadTokens
         
-        Logger.shared.debug("🎯 最终统计结果：")
-        Logger.shared.debug("- 总会话数: \(allSessionIds.count)（基于原始数据唯一session_id）")
-        Logger.shared.debug("- 总请求数: \(totalRequests)（所有有效条目）")
-        Logger.shared.debug("- 有成本的条目: \(effectiveRequestCount)")
-        Logger.shared.debug("- 零成本的条目: \(zeroCostEntries)")
-        Logger.shared.debug("- 总成本: $\(String(format: "%.6f", totalCost))")
-        Logger.shared.debug("- 平均每请求成本: $\(String(format: "%.6f", totalRequests > 0 ? totalCost / Double(totalRequests) : 0))")
-        Logger.shared.debug("- 总令牌: \(formatNumber(totalTokens))")
-        Logger.shared.debug("- Input: \(formatNumber(totalInputTokens)), Output: \(formatNumber(totalOutputTokens)), Cache: \(formatNumber(totalCacheCreationTokens))+\(formatNumber(totalCacheReadTokens))")
+        Logger.shared.info("📊 最终统计结果：")
+        Logger.shared.info("- 总会话数: \(allSessionIds.count)")
+        Logger.shared.info("- 总请求数: \(totalRequests)")
+        Logger.shared.info("- 有成本的条目: \(effectiveRequestCount)")
+        Logger.shared.info("- 总成本: $\(String(format: "%.6f", totalCost))")
+        Logger.shared.info("- 总令牌: \(formatNumber(totalTokens))")
         
-        // 与ccusage基准对比（使用测试脚本验证的精确目标值）
+        // 与ccusage基准对比
+        let ccusageTarget = 1208150693
         let difference = totalTokens - ccusageTarget
         let percentDiff = abs(Double(difference) / Double(ccusageTarget)) * 100
-        Logger.shared.info("📊 与ccusage对比: 差异 \(formatNumber(difference)) tokens (\(String(format: "%.2f", percentDiff))%)")
         
         if percentDiff < 1.0 {
-            Logger.shared.info("✅ 差异小于1%，达到目标精度！")
+            Logger.shared.info("✅ 与ccusage差异小于1%，达到目标精度！")
         } else if percentDiff < 5.0 {
-            Logger.shared.info("🟡 差异小于5%，较好的精度")
-        } else if percentDiff < 10.0 {
-            Logger.shared.info("🟠 差异小于10%，需要进一步优化")
+            Logger.shared.info("🟡 与ccusage差异 \(String(format: "%.2f", percentDiff))%，较好的精度")
         } else {
-            Logger.shared.warning("🔴 差异较大(\(String(format: "%.2f", percentDiff))%)，需要重新审查过滤策略")
+            Logger.shared.warning("🔴 与ccusage差异 \(String(format: "%.2f", percentDiff))%，需要优化")
         }
-        
-        // Phase 3: 添加数据一致性验证
-        Logger.shared.debug("📊 数据一致性验证:")
-        let modelRequestsSum = modelStats.values.map { $0.build().requestCount ?? 0 }.reduce(0, +)
-        Logger.shared.debug("- 总请求数: \(totalRequests)")
-        Logger.shared.debug("- 各模型请求数之和: \(modelRequestsSum)")
-        Logger.shared.debug("- 数据一致性: \(modelRequestsSum == totalRequests ? "✅ 一致" : "⚠️ 不一致")")
-        
-        if modelRequestsSum != totalRequests {
-            Logger.shared.warning("⚠️ 数据不一致：模型请求数之和(\(modelRequestsSum)) != 总请求数(\(totalRequests))")
-        }
-        
-        // Phase 2: 数据一致性检查和诊断
-        if allSessionIds.count > totalRequests {
-            Logger.shared.info("⚠️ 会话数(\(allSessionIds.count)) > 请求数(\(totalRequests))，这可能是因为某些会话中的所有请求都被去重过滤掉了或成本为零")
-        }
-        
-        if effectiveRequestCount != validEntries.count {
-            let zeroRequestCount = validEntries.count - effectiveRequestCount
-            Logger.shared.info("⚠️ 发现 \(zeroRequestCount) 个零成本条目，已从平均成本计算中排除")
-            Logger.shared.info("    这些条目可能是无法识别的模型或测试数据")
-        }
-        
-        // Phase 2: 记录去重和成本计算效果
-        let dedupeRatio = Double(entries.count - validEntries.count) / Double(entries.count) * 100
-        let costEffectiveRatio = Double(effectiveRequestCount) / Double(validEntries.count) * 100
-        Logger.shared.debug("📊 数据处理效果:")
-        Logger.shared.debug("    去重效果: 原始条目 \(entries.count) → 有效条目 \(validEntries.count)，去重率 \(String(format: "%.2f", dedupeRatio))%")
-        Logger.shared.debug("    成本有效率: 有效条目 \(validEntries.count) → 有成本条目 \(effectiveRequestCount)，成本有效率 \(String(format: "%.2f", costEffectiveRatio))%")
         
         return UsageStatistics(
             totalCost: totalCost,
@@ -523,7 +349,7 @@ class UsageService: UsageServiceProtocol, ObservableObject {
             totalCacheCreationTokens: totalCacheCreationTokens,
             totalCacheReadTokens: totalCacheReadTokens,
             totalSessions: allSessionIds.count,  // 使用原始数据的唯一会话数
-            totalRequests: totalRequests,  // Phase 2: 使用有效请求数（有成本的条目数）
+            totalRequests: totalRequests,
             byModel: modelStats.values.map { $0.build() }.sorted { $0.totalCost > $1.totalCost },
             byDate: dateStats.values.map { $0.build() }.sorted { $0.date < $1.date },
             byProject: projectStats.values.map { $0.build() }.sorted { $0.totalCost > $1.totalCost }
@@ -531,7 +357,7 @@ class UsageService: UsageServiceProtocol, ObservableObject {
     }
     
     /// 更新模型统计
-    private func updateModelStats(_ modelStats: inout [String: ModelUsageBuilder], with entry: UsageEntry) {
+    private func updateModelStats(_ modelStats: inout [String: ModelUsageBuilder], with entry: UsageEntry, calculatedCost: Double) {
         // Phase 2: 在统计层面过滤无效模型
         guard !entry.model.isEmpty && entry.model != "unknown" && entry.model != "<synthetic>" else {
             Logger.shared.debug("⚠️  跳过统计 - 无效模型: '\(entry.model)', tokens=\(entry.totalTokens)")
@@ -541,27 +367,27 @@ class UsageService: UsageServiceProtocol, ObservableObject {
         if modelStats[entry.model] == nil {
             modelStats[entry.model] = ModelUsageBuilder(model: entry.model)
         }
-        modelStats[entry.model]?.add(entry)
+        modelStats[entry.model]?.add(entry, calculatedCost: calculatedCost)
     }
     
     /// 更新日期统计
-    private func updateDateStats(_ dateStats: inout [String: DailyUsageBuilder], with entry: UsageEntry) {
+    private func updateDateStats(_ dateStats: inout [String: DailyUsageBuilder], with entry: UsageEntry, calculatedCost: Double) {
         let dateKey = entry.dateString
         if dateStats[dateKey] == nil {
             dateStats[dateKey] = DailyUsageBuilder(date: dateKey)
         }
-        dateStats[dateKey]?.add(entry)
+        dateStats[dateKey]?.add(entry, calculatedCost: calculatedCost)
     }
     
     /// 更新项目统计
-    private func updateProjectStats(_ projectStats: inout [String: ProjectUsageBuilder], with entry: UsageEntry) {
+    private func updateProjectStats(_ projectStats: inout [String: ProjectUsageBuilder], with entry: UsageEntry, calculatedCost: Double) {
         if projectStats[entry.projectPath] == nil {
             projectStats[entry.projectPath] = ProjectUsageBuilder(
                 projectPath: entry.projectPath,
                 projectName: entry.projectName
             )
         }
-        projectStats[entry.projectPath]?.add(entry)
+        projectStats[entry.projectPath]?.add(entry, calculatedCost: calculatedCost)
     }
     
     /// 排序会话数据
@@ -739,15 +565,8 @@ private class ModelUsageBuilder {
         self.model = model
     }
     
-    func add(_ entry: UsageEntry) {
-        // 使用定价模型计算成本（与 ccusage 一致）
-        let calculatedCost = PricingModel.shared.calculateCost(
-            model: entry.model,
-            inputTokens: entry.inputTokens,
-            outputTokens: entry.outputTokens,
-            cacheCreationTokens: entry.cacheCreationTokens,
-            cacheReadTokens: entry.cacheReadTokens
-        )
+    func add(_ entry: UsageEntry, calculatedCost: Double) {
+        // 使用预计算的成本，避免重复计算
         totalCost += calculatedCost
         inputTokens += entry.inputTokens
         outputTokens += entry.outputTokens
@@ -791,15 +610,8 @@ private class DailyUsageBuilder {
         self.date = date
     }
     
-    func add(_ entry: UsageEntry) {
-        // 使用定价模型计算成本（与 ccusage 一致）
-        let calculatedCost = PricingModel.shared.calculateCost(
-            model: entry.model,
-            inputTokens: entry.inputTokens,
-            outputTokens: entry.outputTokens,
-            cacheCreationTokens: entry.cacheCreationTokens,
-            cacheReadTokens: entry.cacheReadTokens
-        )
+    func add(_ entry: UsageEntry, calculatedCost: Double) {
+        // 使用预计算的成本，避免重复计算
         totalCost += calculatedCost
         // 确保与 ccusage 计算方式一致
         totalTokens += entry.totalTokens
@@ -832,15 +644,8 @@ private class ProjectUsageBuilder {
         self.projectName = projectName
     }
     
-    func add(_ entry: UsageEntry) {
-        // 使用定价模型计算成本（与 ccusage 一致）
-        let calculatedCost = PricingModel.shared.calculateCost(
-            model: entry.model,
-            inputTokens: entry.inputTokens,
-            outputTokens: entry.outputTokens,
-            cacheCreationTokens: entry.cacheCreationTokens,
-            cacheReadTokens: entry.cacheReadTokens
-        )
+    func add(_ entry: UsageEntry, calculatedCost: Double) {
+        // 使用预计算的成本，避免重复计算
         totalCost += calculatedCost
         // 确保与 ccusage 计算方式一致：使用 entry.totalTokens
         totalTokens += entry.totalTokens
