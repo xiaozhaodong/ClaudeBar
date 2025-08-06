@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 移除沙盒限制以获得更准确的系统信息 -->
+	<!-- <key>com.apple.security.app-sandbox</key> -->
+	<!-- <true/> -->
+	
+	<!-- 保留网络访问权限（如果需要） -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	
+	<!-- 保留文件访问权限（非沙盒环境下仍有用） -->
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+	<key>com.apple.security.files.downloads.read-write</key>
+	<true/>
+	
+	<!-- 允许读取进程信息 -->
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+</dict>
+</plist>
