@@ -82,7 +82,7 @@ struct NavigationContentView: View {
     @EnvironmentObject var appState: AppState
     
     var body: some View {
-        Group {
+        VStack {
             switch selectedTab {
             case .overview:
                 OverviewPageView(appState: appState)

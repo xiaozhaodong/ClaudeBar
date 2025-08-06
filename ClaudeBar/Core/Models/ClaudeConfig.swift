@@ -1,6 +1,31 @@
 import Foundation
 
-/// Claude 配置模型
+/// API 配置数据结构 - 兼容 switch-claude.sh 格式
+/// 遵循 KISS 原则：简化数据模型，统一配置格式
+struct ApiConfigsData: Codable {
+    var current: String
+    var apiConfigs: [String: ApiEndpointConfig]
+    
+    enum CodingKeys: String, CodingKey {
+        case current
+        case apiConfigs = "api_configs"
+    }
+}
+
+/// API 端点配置 - 直接对应 switch-claude.sh 中的配置项
+/// 遵循 SRP 原则：只负责存储 API 相关配置
+struct ApiEndpointConfig: Codable, Hashable {
+    let anthropicAuthToken: String
+    let anthropicBaseURL: String
+    
+    enum CodingKeys: String, CodingKey {
+        case anthropicAuthToken = "ANTHROPIC_AUTH_TOKEN"
+        case anthropicBaseURL = "ANTHROPIC_BASE_URL"
+    }
+}
+
+/// Claude 配置模型 - 重构后支持新格式
+/// 遵循 SOLID 原则：单一职责，只负责配置数据的表示
 struct ClaudeConfig: Codable, Identifiable, Hashable {
     var id = UUID()
     let name: String
@@ -8,6 +33,30 @@ struct ClaudeConfig: Codable, Identifiable, Hashable {
     let permissions: Permissions?
     let cleanupPeriodDays: Int?
     let includeCoAuthoredBy: Bool?
+    
+    /// 从新的 API 端点配置创建 Claude 配置
+    /// 遵循 KISS 原则：简化构造逻辑
+    init(name: String, apiConfig: ApiEndpointConfig) {
+        self.name = name
+        self.env = Environment(
+            anthropicAuthToken: apiConfig.anthropicAuthToken,
+            anthropicBaseURL: apiConfig.anthropicBaseURL,
+            claudeCodeMaxOutputTokens: "32000",
+            claudeCodeDisableNonessentialTraffic: "1"
+        )
+        self.permissions = Permissions(allow: [], deny: [])
+        self.cleanupPeriodDays = 365
+        self.includeCoAuthoredBy = false
+    }
+    
+    /// 转换为 API 端点配置
+    /// 遵循 DRY 原则：统一数据转换逻辑
+    func toApiEndpointConfig() -> ApiEndpointConfig {
+        return ApiEndpointConfig(
+            anthropicAuthToken: env.anthropicAuthToken ?? "",
+            anthropicBaseURL: env.anthropicBaseURL ?? "https://api.anthropic.com"
+        )
+    }
     
     /// 环境变量配置
     struct Environment: Codable, Hashable {
@@ -30,7 +79,7 @@ struct ClaudeConfig: Codable, Identifiable, Hashable {
         let deny: [String]
     }
     
-    /// 从配置名称创建配置对象
+    /// 从配置名称创建配置对象（向后兼容）
     init(name: String, configData: ConfigData) {
         self.name = name
         self.env = configData.env
@@ -39,7 +88,7 @@ struct ClaudeConfig: Codable, Identifiable, Hashable {
         self.includeCoAuthoredBy = configData.includeCoAuthoredBy
     }
     
-    /// 直接初始化
+    /// 直接初始化（向后兼容）
     init(name: String, env: Environment, permissions: Permissions? = nil, 
          cleanupPeriodDays: Int? = nil, includeCoAuthoredBy: Bool? = nil) {
         self.name = name
@@ -69,12 +118,21 @@ struct ClaudeConfig: Codable, Identifiable, Hashable {
     }
 }
 
-/// 配置文件的数据结构（用于 JSON 序列化）
+/// 配置文件的数据结构（用于 JSON 序列化）- 向后兼容
 struct ConfigData: Codable {
     let env: ClaudeConfig.Environment
     let permissions: ClaudeConfig.Permissions?
     let cleanupPeriodDays: Int?
     let includeCoAuthoredBy: Bool?
+}
+
+/// 配置迁移结果
+/// 遵循 SRP 原则：专门负责迁移操作结果
+struct MigrationResult {
+    let success: Bool
+    let migratedConfigs: Int
+    let errors: [ConfigManagerError]
+    let currentConfig: String?
 }
 
 /// 配置管理错误类型
@@ -94,6 +152,9 @@ enum ConfigManagerError: LocalizedError {
     case diskSpaceInsufficient
     case configDirectoryInaccessible(String)
     case tokenMigrationFailed(String)
+    case apiConfigsFormatInvalid(String)
+    case migrationFailed(String)
+    case backupCreationFailed(String)
     
     /// 用户友好的错误描述
     var errorDescription: String? {
@@ -122,6 +183,12 @@ enum ConfigManagerError: LocalizedError {
             return "无法访问配置目录：\(path)"
         case .tokenMigrationFailed(let reason):
             return "Token 迁移到安全存储失败：\(reason)"
+        case .apiConfigsFormatInvalid(let reason):
+            return "API 配置格式无效：\(reason)"
+        case .migrationFailed(let reason):
+            return "配置迁移失败：\(reason)"
+        case .backupCreationFailed(let reason):
+            return "备份创建失败：\(reason)"
         }
     }
     
@@ -253,6 +320,30 @@ enum ConfigManagerError: LocalizedError {
             3. 检查钥匙串权限设置
             4. 如果问题持续，可以继续使用但 Token 可能不安全
             """
+        case .apiConfigsFormatInvalid:
+            return """
+            建议操作：
+            1. 检查 api_configs.json 文件格式
+            2. 使用 JSON 验证工具检查语法
+            3. 参考 switch-claude.sh 中的标准格式
+            4. 如有必要可重新初始化配置文件
+            """
+        case .migrationFailed:
+            return """
+            建议操作：
+            1. 检查旧配置文件是否完整
+            2. 确保有足够的磁盘空间
+            3. 检查文件读写权限
+            4. 可手动复制配置信息到新格式
+            """
+        case .backupCreationFailed:
+            return """
+            建议操作：
+            1. 检查磁盘空间是否充足
+            2. 验证文件写入权限
+            3. 检查目标目录是否存在
+            4. 考虑手动备份重要配置
+            """
         }
     }
     
@@ -271,6 +362,10 @@ enum ConfigManagerError: LocalizedError {
             return .error
         case .claudeStartFailed, .configDirectoryInaccessible:
             return .critical
+        case .apiConfigsFormatInvalid, .migrationFailed:
+            return .error
+        case .backupCreationFailed:
+            return .warning
         }
     }
     
@@ -290,6 +385,10 @@ enum ConfigManagerError: LocalizedError {
         case .parseError:
             return true
         case .claudeStartFailed, .diskSpaceInsufficient, .configDirectoryInaccessible:
+            return false
+        case .apiConfigsFormatInvalid, .migrationFailed:
+            return true
+        case .backupCreationFailed:
             return false
         }
     }
@@ -317,6 +416,10 @@ enum ConfigManagerError: LocalizedError {
             return .freeSpace
         case .configDirectoryInaccessible:
             return .contactSupport
+        case .apiConfigsFormatInvalid, .migrationFailed:
+            return .fixConfigFormat
+        case .backupCreationFailed:
+            return .checkPermissions
         }
     }
     

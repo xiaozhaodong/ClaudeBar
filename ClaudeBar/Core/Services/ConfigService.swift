@@ -12,7 +12,7 @@ protocol ConfigServiceProtocol {
     
     /// 切换到指定配置
     /// - Parameter config: 要切换到的配置
-    /// - Throws: 配置切换过程中的错误
+    /// - Throws: API 端点切换过程中的错误
     func switchConfig(_ config: ClaudeConfig) async throws
     
     /// 创建新配置
@@ -588,7 +588,7 @@ class ConfigService: ConfigServiceProtocol {
             // 直接将原始内容写入到 settings.json，保持原有格式
             try sourceData.write(to: activeConfigFile)
             print("✓ 成功切换到配置: \(config.name)")
-            print("=== 配置切换完成 ===")
+            print("=== API 端点切换完成 ===")
             
         } catch {
             print("✗ 写入配置文件失败: \(error)")

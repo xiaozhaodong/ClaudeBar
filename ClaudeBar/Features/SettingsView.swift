@@ -17,7 +17,7 @@ enum SettingsNavigationTab: String, CaseIterable, Identifiable {
         case .general:
             return "通用设置"
         case .config:
-            return "配置管理"
+            return "API 端点管理"
         case .appearance:
             return "外观主题"
         case .advanced:
@@ -940,7 +940,7 @@ struct ModernAppSettingsSection: View {
                 ModernSettingRow(
                     icon: "bell.fill",
                     title: "显示通知",
-                    description: "配置切换成功时显示通知",
+                    description: "API 端点切换成功时显示通知",
                     control: AnyView(
                         Toggle("", isOn: .constant(true))
                             .controlSize(.small)
@@ -987,7 +987,7 @@ struct NotificationSettingsSection: View {
                 ModernSettingRow(
                     icon: "checkmark.circle.fill",
                     title: "成功通知",
-                    description: "配置切换成功时显示通知",
+                    description: "API 端点切换成功时显示通知",
                     control: AnyView(
                         Toggle("", isOn: .constant(true))
                             .controlSize(.small)

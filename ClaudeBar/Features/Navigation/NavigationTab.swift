@@ -26,7 +26,7 @@ enum NavigationTab: String, CaseIterable, Identifiable {
         case .overview:
             return "概览"
         case .configManagement:
-            return "配置管理"
+            return "API 端点管理"
         case .processMonitor:
             return "进程监控"
         case .usageStatistics:

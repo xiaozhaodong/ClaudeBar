@@ -68,7 +68,7 @@ struct ModernHeaderSection: View {
                 }
                 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Claude 配置管理器")
+                    Text("Claude API 端点管理器")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(.primary)
                     
@@ -125,9 +125,9 @@ struct ModernHeaderSection: View {
         if appState.isLoading {
             return "加载中..."
         } else if let currentConfig = appState.currentConfig {
-            return currentConfig.isValid ? "运行正常" : "配置异常"
+            return currentConfig.isValid ? "运行正常" : "端点异常"
         } else {
-            return "未配置"
+            return "未配置端点"
         }
     }
 }
@@ -161,7 +161,7 @@ struct CurrentConfigCard: View {
                                     .font(.system(size: 15, weight: .semibold))
                                     .foregroundColor(.primary)
                                 
-                                Text("当前配置")
+                                Text("当前 API 端点")
                                     .font(.system(size: 11, weight: .medium))
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
@@ -211,7 +211,7 @@ struct CurrentConfigCard: View {
                             ConfigDetailRow(
                                 icon: "exclamationmark.triangle.fill",
                                 label: "状态",
-                                value: "配置需要修复",
+                                value: "端点需要修复",
                                 valueColor: .orange
                             )
                         }
@@ -254,7 +254,7 @@ struct CurrentConfigCard: View {
     
     private var statusDescription: String {
         guard let currentConfig = appState.currentConfig else { return "未知状态" }
-        return currentConfig.isValid ? "配置正常运行" : "配置存在问题"
+        return currentConfig.isValid ? "端点正常运行" : "端点存在问题"
     }
     
     private var statusTextColor: Color {
@@ -337,7 +337,7 @@ struct SearchBar: View {
                 .foregroundColor(searchText.isEmpty ? .secondary : .blue)
             
             // 搜索输入框
-            TextField("搜索配置...", text: $searchText)
+            TextField("搜索 API 端点...", text: $searchText)
                 .font(.system(size: 13, weight: .medium))
                 .textFieldStyle(PlainTextFieldStyle())
                 .onTapGesture {
@@ -385,7 +385,7 @@ struct ModernConfigListSection: View {
         VStack(alignment: .leading, spacing: 12) {
             // 列表头部
             HStack {
-                Text("可用配置")
+                Text("可用 API 端点")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.primary)
                 

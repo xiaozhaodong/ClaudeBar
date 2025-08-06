@@ -16,11 +16,11 @@ struct ConfigManagementHeader: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("配置管理")
+                    Text("API 端点管理")
                         .font(.system(size: 20, weight: .semibold))
                         .foregroundColor(.primary)
                     
-                    Text("管理您的 Claude CLI 配置文件")
+                    Text("管理您的 Claude API 端点配置")
                         .font(.system(size: 14))
                         .foregroundColor(.secondary)
                 }
@@ -81,7 +81,7 @@ struct CurrentConfigDetailCard: View {
                         .font(.system(size: 18))
                         .foregroundColor(.green)
                     
-                    Text("当前使用的配置")
+                    Text("当前使用的 API 端点")
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundColor(.primary)
                     
@@ -249,7 +249,7 @@ struct ConfigurationsList: View {
                     HStack(spacing: 6) {
                         Image(systemName: "plus")
                             .font(.system(size: 12))
-                        Text("新建配置")
+                        Text("新建端点")
                             .font(.system(size: 12, weight: .medium))
                     }
                     .foregroundColor(.green)
@@ -284,10 +284,107 @@ struct ConfigurationsList: View {
     }
     
     private func createNewConfig() {
-        // 打开配置目录，让用户手动创建配置
-        if let configService = appState.configService as? ConfigService {
-            let configDirectory = URL(fileURLWithPath: configService.configDirectoryPath)
-            NSWorkspace.shared.open(configDirectory)
+        // 显示新建配置对话框
+        showNewConfigDialog()
+    }
+    
+    private func showNewConfigDialog() {
+        let alert = NSAlert()
+        alert.messageText = "新建 API 端点配置"
+        alert.informativeText = "请输入新配置的详细信息"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "创建")
+        alert.addButton(withTitle: "取消")
+        
+        // 使用简单的容器视图，精确控制布局，给按钮留出足够空间
+        let containerView = NSView(frame: NSRect(x: 0, y: 0, width: 350, height: 180))
+        
+        // 配置名称标签和输入框
+        let nameLabel = NSTextField(labelWithString: "配置名称:")
+        nameLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        nameLabel.frame = NSRect(x: 0, y: 150, width: 100, height: 17)
+        nameLabel.isEditable = false
+        nameLabel.isBordered = false
+        nameLabel.backgroundColor = NSColor.clear
+        
+        let nameField = NSTextField(frame: NSRect(x: 0, y: 125, width: 350, height: 22))
+        nameField.placeholderString = "例如：work, personal, claude-3-5"
+        
+        // Base URL 标签和输入框
+        let urlLabel = NSTextField(labelWithString: "API Base URL:")
+        urlLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        urlLabel.frame = NSRect(x: 0, y: 95, width: 100, height: 17)
+        urlLabel.isEditable = false
+        urlLabel.isBordered = false
+        urlLabel.backgroundColor = NSColor.clear
+        
+        let baseUrlField = NSTextField(frame: NSRect(x: 0, y: 70, width: 350, height: 22))
+        baseUrlField.placeholderString = "https://api.anthropic.com"
+        baseUrlField.stringValue = "https://api.anthropic.com"
+        
+        // Auth Token 标签和输入框
+        let tokenLabel = NSTextField(labelWithString: "Auth Token:")
+        tokenLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        tokenLabel.frame = NSRect(x: 0, y: 40, width: 100, height: 17)
+        tokenLabel.isEditable = false
+        tokenLabel.isBordered = false
+        tokenLabel.backgroundColor = NSColor.clear
+        
+        let tokenField = NSSecureTextField(frame: NSRect(x: 0, y: 15, width: 350, height: 22))
+        tokenField.placeholderString = "sk-ant-api03-xxxxxxxxxxxxxxx"
+        
+        // 添加到容器视图
+        containerView.addSubview(nameLabel)
+        containerView.addSubview(nameField)
+        containerView.addSubview(urlLabel)
+        containerView.addSubview(baseUrlField)
+        containerView.addSubview(tokenLabel)
+        containerView.addSubview(tokenField)
+        
+        alert.accessoryView = containerView
+        
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            let configName = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            let baseUrl = baseUrlField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            let token = tokenField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            // 验证输入
+            guard !configName.isEmpty else {
+                appState.showErrorMessage("配置名称不能为空")
+                return
+            }
+            
+            guard !token.isEmpty else {
+                appState.showErrorMessage("Auth Token 不能为空")
+                return
+            }
+            
+            // 创建新配置
+            let env = ClaudeConfig.Environment(
+                anthropicAuthToken: token,
+                anthropicBaseURL: baseUrl.isEmpty ? "https://api.anthropic.com" : baseUrl,
+                claudeCodeMaxOutputTokens: "32000",
+                claudeCodeDisableNonessentialTraffic: "1"
+            )
+            
+            let newConfig = ClaudeConfig(
+                name: configName,
+                env: env,
+                permissions: ClaudeConfig.Permissions(allow: [], deny: []),
+                cleanupPeriodDays: 365,
+                includeCoAuthoredBy: false
+            )
+            
+            Task {
+                do {
+                    try await appState.configService.createConfig(newConfig)
+                    appState.showSuccessMessage("成功创建配置「\(configName)」")
+                    await appState.loadConfigs()
+                } catch {
+                    appState.showErrorMessage("创建配置失败：\(error.localizedDescription)")
+                }
+            }
         }
     }
 }
@@ -407,14 +504,14 @@ struct ConfigManagementRowView: View {
                     }
                     .buttonStyle(PlainButtonStyle())
                     
-                    Button(action: duplicateConfig) {
-                        Image(systemName: "doc.on.doc")
+                    Button(action: deleteConfig) {
+                        Image(systemName: "trash")
                             .font(.system(size: 12))
-                            .foregroundColor(.green)
+                            .foregroundColor(.red)
                             .frame(width: 24, height: 24)
                             .background(
                                 Circle()
-                                    .fill(Color.green.opacity(0.1))
+                                    .fill(Color.red.opacity(0.1))
                             )
                     }
                     .buttonStyle(PlainButtonStyle())
@@ -478,19 +575,32 @@ struct ConfigManagementRowView: View {
     }
     
     private func editConfig() {
-        // 打开配置文件进行编辑
-        if let configService = appState.configService as? ConfigService {
-            let configDirectory = URL(fileURLWithPath: configService.configDirectoryPath)
-            let configFileURL = configDirectory.appendingPathComponent("\(config.name)-settings.json")
-            NSWorkspace.shared.open(configFileURL)
-        }
+        // 打开 API 配置文件进行编辑
+        let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
+        let apiConfigFile = homeDirectory.appendingPathComponent(".claude/api_configs.json")
+        NSWorkspace.shared.open(apiConfigFile)
     }
     
-    private func duplicateConfig() {
-        // 复制配置文件（简单实现，打开目录让用户手动操作）
-        if let configService = appState.configService as? ConfigService {
-            let configDirectory = URL(fileURLWithPath: configService.configDirectoryPath)
-            NSWorkspace.shared.open(configDirectory)
+    private func deleteConfig() {
+        // 删除配置确认对话框
+        let alert = NSAlert()
+        alert.messageText = "删除 API 端点配置"
+        alert.informativeText = "确定要删除配置「\(config.name)」吗？此操作无法撤销。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "删除")
+        alert.addButton(withTitle: "取消")
+        
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            Task {
+                do {
+                    try await appState.configService.deleteConfig(config)
+                    appState.showSuccessMessage("已删除配置「\(config.name)」")
+                    await appState.loadConfigs()
+                } catch {
+                    appState.showErrorMessage("删除配置失败：\(error.localizedDescription)")
+                }
+            }
         }
     }
 }

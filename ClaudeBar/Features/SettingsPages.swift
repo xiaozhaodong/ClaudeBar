@@ -288,7 +288,7 @@ struct GeneralSettingsPage: View {
                     SettingToggleRow(
                         icon: "checkmark.circle.fill",
                         title: "成功通知",
-                        description: "配置切换成功时显示通知",
+                        description: "API 端点切换成功时显示通知",
                         isOn: $preferences.showSuccessNotifications
                     )
                     

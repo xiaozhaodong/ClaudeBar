@@ -32,7 +32,7 @@ struct ConfigManagementPageView: View {
                 .padding(24)
             }
         }
-        .navigationTitle("配置管理")
+        .navigationTitle("API 端点管理")
     }
 }
 
@@ -340,7 +340,7 @@ struct HelpPageView: View {
                         )
                         
                         HelpFAQItem(
-                            question: "配置切换失败怎么办？",
+                            question: "API 端点切换失败怎么办？",
                             answer: "可能的原因：\n1. 目标配置文件损坏或格式错误\n2. 缺少必要的 API Token\n3. 网络连接问题\n4. Claude CLI 进程异常\n\n建议先验证配置文件的完整性"
                         )
                         
