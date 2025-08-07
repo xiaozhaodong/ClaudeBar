@@ -3,20 +3,25 @@ import SwiftUI
 /// 使用统计主界面
 struct UsageStatisticsView: View {
     @StateObject private var viewModel: UsageStatisticsViewModel
-    @Environment(\.presentationMode) var presentationMode
     
     init(configService: ConfigServiceProtocol) {
         self._viewModel = StateObject(wrappedValue: UsageStatisticsViewModel(configService: configService))
     }
     
     var body: some View {
-        VStack(spacing: 0) {
-            // 顶部导航栏
-            headerView
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.Page.componentSpacing) {
+            // 页面标题区域
+            pageHeaderView
+            
+            // 日期选择器区域
+            dateRangeSelector
+                .padding(.horizontal, DesignTokens.Spacing.Page.padding)
             
             // 内容区域
             contentView
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, DesignTokens.Spacing.Page.padding)
         .onAppear {
             Task {
                 await viewModel.loadStatistics()
@@ -24,102 +29,86 @@ struct UsageStatisticsView: View {
         }
     }
     
-    /// 顶部导航栏
-    private var headerView: some View {
-        VStack(spacing: 8) {
-            HStack {
-                Button("返回") {
-                    presentationMode.wrappedValue.dismiss()
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(.blue)
+    /// 页面标题区域
+    private var pageHeaderView: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("使用统计")
+                    .font(DesignTokens.Typography.pageTitle)
+                    .foregroundColor(.primary)
                 
-                Spacer()
-                
-                VStack(alignment: .center, spacing: 2) {
-                    Text("使用统计")
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                    
-                    Text("跟踪您的 Claude 使用情况和成本")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                
-                Spacer()
-                
-                // 刷新按钮
-                Button(action: {
-                    Task {
-                        await viewModel.refreshStatistics()
-                    }
-                }) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 14))
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(.blue)
-                .disabled(viewModel.isLoading)
+                Text("跟踪您的 Claude 使用情况和成本")
+                    .font(DesignTokens.Typography.subtitle)
+                    .foregroundColor(.secondary)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
             
-            // 日期范围选择器
-            dateRangeSelector
-                .padding(.horizontal, 16)
-                .padding(.bottom, 12)
+            Spacer()
+            
+            // 刷新按钮
+            Button(action: {
+                Task {
+                    await viewModel.refreshStatistics()
+                }
+            }) {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: DesignTokens.Typography.IconSize.medium))
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(.blue)
+            .disabled(viewModel.isLoading)
         }
-        .background(Color(NSColor.controlBackgroundColor))
-        .overlay(
-            Rectangle()
-                .frame(height: 1)
-                .foregroundColor(Color(NSColor.separatorColor)),
-            alignment: .bottom
-        )
+        .padding(.horizontal, DesignTokens.Spacing.Page.padding)
     }
     
     /// 日期范围选择器
     private var dateRangeSelector: some View {
-        HStack(spacing: DesignTokens.Spacing.sm) {
-            ForEach(DateRange.allCases, id: \.self) { range in
-                Button(range.displayName) {
-                    withAnimation(DesignTokens.Animation.standard) {
-                        viewModel.selectedDateRange = range
+        VStack(spacing: DesignTokens.Spacing.sm) {
+            HStack(spacing: DesignTokens.Spacing.sm) {
+                ForEach(DateRange.allCases, id: \.self) { range in
+                    Button(range.displayName) {
+                        withAnimation(DesignTokens.Animation.standard) {
+                            viewModel.selectedDateRange = range
+                        }
+                        Task {
+                            await viewModel.loadStatistics()
+                        }
                     }
-                    Task {
-                        await viewModel.loadStatistics()
-                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, DesignTokens.Spacing.md)
+                    .padding(.vertical, DesignTokens.Spacing.sm)
+                    .background(
+                        RoundedRectangle(cornerRadius: DesignTokens.Size.Radius.medium)
+                            .fill(
+                                viewModel.selectedDateRange == range ? 
+                                    DesignTokens.Colors.accent : 
+                                    DesignTokens.Colors.controlBackground
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: DesignTokens.Size.Radius.medium)
+                                    .stroke(
+                                        viewModel.selectedDateRange == range ? 
+                                            DesignTokens.Colors.accent : 
+                                            DesignTokens.Colors.separator.opacity(0.3), 
+                                        lineWidth: 1
+                                    )
+                            )
+                    )
+                    .foregroundColor(
+                        viewModel.selectedDateRange == range ? 
+                            .white : 
+                            DesignTokens.Colors.primaryText
+                    )
+                    .font(DesignTokens.Typography.body)
+                    .scaleEffect(viewModel.selectedDateRange == range ? 1.02 : 1.0)
                 }
-                .buttonStyle(.plain)
-                .padding(.horizontal, DesignTokens.Spacing.md)
-                .padding(.vertical, DesignTokens.Spacing.sm)
-                .background(
-                    RoundedRectangle(cornerRadius: DesignTokens.Size.Radius.medium)
-                        .fill(
-                            viewModel.selectedDateRange == range ? 
-                                DesignTokens.Colors.accent : 
-                                DesignTokens.Colors.controlBackground
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: DesignTokens.Size.Radius.medium)
-                                .stroke(
-                                    viewModel.selectedDateRange == range ? 
-                                        DesignTokens.Colors.accent : 
-                                        DesignTokens.Colors.separator.opacity(0.3), 
-                                    lineWidth: 1
-                                )
-                        )
-                )
-                .foregroundColor(
-                    viewModel.selectedDateRange == range ? 
-                        .white : 
-                        DesignTokens.Colors.primaryText
-                )
-                .font(DesignTokens.Typography.body)
-                .scaleEffect(viewModel.selectedDateRange == range ? 1.02 : 1.0)
+                
+                Spacer()
             }
             
-            Spacer()
+            // 分隔线
+            Rectangle()
+                .fill(DesignTokens.Colors.separator.opacity(0.3))
+                .frame(height: 1)
         }
     }
     
@@ -214,7 +203,8 @@ struct UsageStatisticsView: View {
                 // 标签页内容
                 tabContent(statistics)
             }
-            .padding(DesignTokens.Spacing.xl)
+            .padding(.horizontal, DesignTokens.Spacing.Page.padding)
+            .padding(.top, DesignTokens.Spacing.lg)
             .animation(DesignTokens.Animation.pageTransition, value: statistics.id)
         }
         .background(DesignTokens.Colors.windowBackground)
