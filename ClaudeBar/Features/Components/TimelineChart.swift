@@ -1,5 +1,49 @@
 import SwiftUI
 
+// MARK: - Performance Optimization Structures
+
+/// 记忆化值容器，避免重复计算
+final class MemoizedValue<T> {
+    private var cachedValue: T?
+    private var cachedInputHash: Int?
+    
+    func getValue<Input: Hashable>(for input: Input, compute: (Input) -> T) -> T {
+        let inputHash = input.hashValue
+        if let cached = cachedValue, cachedInputHash == inputHash {
+            return cached
+        }
+        
+        let newValue = compute(input)
+        cachedValue = newValue
+        cachedInputHash = inputHash
+        return newValue
+    }
+    
+    func clear() {
+        cachedValue = nil
+        cachedInputHash = nil
+    }
+}
+
+/// 图表度量数据
+struct ChartMetrics: Hashable {
+    let barWidth: CGFloat
+    let totalWidth: CGFloat
+    let itemCount: Int
+    
+    static func == (lhs: ChartMetrics, rhs: ChartMetrics) -> Bool {
+        return lhs.barWidth == rhs.barWidth && 
+               lhs.totalWidth == rhs.totalWidth && 
+               lhs.itemCount == rhs.itemCount
+    }
+    
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(barWidth)
+        hasher.combine(totalWidth)
+        hasher.combine(itemCount)
+    }
+}
+
 /// 时间线标签页视图
 struct TimelineTabView: View {
     let dailyUsage: [DailyUsage]
@@ -107,11 +151,21 @@ struct UsageChart: View {
     let dailyUsage: [DailyUsage]
     @State private var hoveredIndex: Int?
     @State private var showAnimation = false
+    @State private var hoverDebounceTask: Task<Void, Never>?
+    @State private var isHoverTransitioning = false
+    
+    // MARK: - Performance Optimization
+    private let maxCostMemo = MemoizedValue<Double>()
+    private let chartMetricsMemo = MemoizedValue<ChartMetrics>()
+    
+    // MARK: - Hover State Management
+    private let hoverEnterDelay: UInt64 = 80_000_000    // 80ms - 快速显示
+    private let hoverExitDelay: UInt64 = 150_000_000    // 150ms - 防止意外隐藏
     
     var body: some View {
         GeometryReader { geometry in
-            let maxCost = dailyUsage.map { $0.totalCost }.max() ?? 1
-            let barWidth = max(8, (geometry.size.width - 60) / CGFloat(dailyUsage.count) - 3)
+            let maxCost = getMaxCost()
+            let metrics = getChartMetrics(geometry: geometry)
             let chartHeight = geometry.size.height - 80
             
             ZStack(alignment: .bottom) {
@@ -124,7 +178,7 @@ struct UsageChart: View {
                         chartBar(
                             day: day,
                             index: index,
-                            barWidth: barWidth,
+                            barWidth: metrics.barWidth,
                             maxHeight: chartHeight,
                             maxCost: maxCost
                         )
@@ -133,11 +187,23 @@ struct UsageChart: View {
                 .padding(.leading, 60)
                 .padding(.bottom, 40)
                 
+                // 浮动工具提示层（独立层级，不影响图表布局）
+                if let hoveredIndex = hoveredIndex,
+                   hoveredIndex < dailyUsage.count {
+                    enhancedFloatingTooltip(
+                        for: dailyUsage[hoveredIndex], 
+                        at: hoveredIndex, 
+                        geometry: geometry, 
+                        barWidth: metrics.barWidth
+                    )
+                        .allowsHitTesting(false) // 防止工具提示阻止鼠标事件
+                }
+                
                 // Y轴标签
                 yAxisLabels(geometry: geometry, chartHeight: chartHeight, maxCost: maxCost)
                 
                 // X轴标签
-                xAxisLabels(geometry: geometry, barWidth: barWidth)
+                xAxisLabels(geometry: geometry, barWidth: metrics.barWidth)
             }
         }
         .onAppear {
@@ -145,55 +211,100 @@ struct UsageChart: View {
                 showAnimation = true
             }
         }
+        .onDisappear {
+            hoverDebounceTask?.cancel()
+            hoverDebounceTask = nil
+            isHoverTransitioning = false
+        }
     }
     
-    /// 单个柱状图条
+    // MARK: - Performance Optimization Methods
+    
+    /// 获取缓存的最大成本值（简化版本，避免Hashable约束）
+    private func getMaxCost() -> Double {
+        // 简单缓存：只要数组长度相同就认为没变化（针对此场景优化）
+        let cacheKey = dailyUsage.count
+        return maxCostMemo.getValue(for: cacheKey) { _ in
+            dailyUsage.map { $0.totalCost }.max() ?? 1
+        }
+    }
+    
+    /// 获取缓存的图表度量数据
+    private func getChartMetrics(geometry: GeometryProxy) -> ChartMetrics {
+        let cacheKey = Int(geometry.size.width * 1000) + dailyUsage.count
+        return chartMetricsMemo.getValue(for: cacheKey) { _ in
+            let chartWidth = geometry.size.width - 60
+            let barWidth = max(8, chartWidth / CGFloat(dailyUsage.count) - 3)
+            return ChartMetrics(
+                barWidth: barWidth,
+                totalWidth: chartWidth,
+                itemCount: dailyUsage.count
+            )
+        }
+    }
+    
+    /// 增强版柱状图条 - 优化交互体验和视觉反馈
     private func chartBar(day: DailyUsage, index: Int, barWidth: CGFloat, maxHeight: CGFloat, maxCost: Double) -> some View {
-        VStack(spacing: 4) {
-            // 工具提示
-            if hoveredIndex == index {
-                enhancedTooltip(for: day)
-                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
-                    .zIndex(10)
-            }
-            
-            // 柱状图条
+        let isHovered = hoveredIndex == index
+        let barHeight = showAnimation ? 
+            max(4, CGFloat(day.totalCost / maxCost) * maxHeight) : 
+            4
+        
+        return ZStack {
+            // 主柱状图
             Rectangle()
-                .fill(barGradient(for: day))
+                .fill(barGradient(for: day, isHovered: isHovered))
                 .frame(
                     width: barWidth,
-                    height: showAnimation ? 
-                        max(4, CGFloat(day.totalCost / maxCost) * maxHeight) : 
-                        4
+                    height: barHeight
                 )
                 .cornerRadius(barWidth / 4)
                 .overlay(
-                    // 顶部高亮
+                    // 动态顶部高亮
                     Rectangle()
                         .fill(
                             LinearGradient(
-                                colors: [Color.white.opacity(0.4), Color.clear],
+                                colors: [
+                                    Color.white.opacity(isHovered ? 0.6 : 0.4), 
+                                    Color.clear
+                                ],
                                 startPoint: .top,
                                 endPoint: .bottom
                             )
                         )
-                        .frame(height: max(2, CGFloat(day.totalCost / maxCost) * maxHeight * 0.3))
+                        .frame(height: max(2, barHeight * 0.3))
                         .cornerRadius(barWidth / 4),
                     alignment: .top
                 )
                 .shadow(
-                    color: barColor(for: day).opacity(0.3),
-                    radius: hoveredIndex == index ? 4 : 2,
+                    color: barColor(for: day).opacity(isHovered ? 0.5 : 0.25),
+                    radius: isHovered ? 6 : 3,
                     x: 0,
-                    y: 2
+                    y: isHovered ? 4 : 2
                 )
-                .scaleEffect(x: 1.0, y: hoveredIndex == index ? 1.05 : 1.0)
-                .animation(DesignTokens.Animation.fast, value: hoveredIndex)
-                .onHover { isHovering in
-                    withAnimation(DesignTokens.Animation.fast) {
-                        hoveredIndex = isHovering ? index : nil
-                    }
-                }
+            
+            // 悬停时的边框高亮
+            if isHovered {
+                Rectangle()
+                    .fill(Color.clear)
+                    .frame(
+                        width: barWidth + 2,
+                        height: barHeight + 2
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: barWidth / 4)
+                            .stroke(
+                                barColor(for: day).opacity(0.8),
+                                lineWidth: 1.5
+                            )
+                    )
+                    .transition(.scale)
+            }
+        }
+        .scaleEffect(x: isHovered ? 1.02 : 1.0, y: isHovered ? 1.05 : 1.0)
+        .animation(DesignTokens.Animation.fast, value: isHovered)
+        .onHover { isHovering in
+            handleHover(isHovering: isHovering, index: index)
         }
     }
     
@@ -264,6 +375,85 @@ struct UsageChart: View {
         }
     }
     
+    /// 增强版防抖悬停处理 - 消除闪动和竞态条件
+    private func handleHover(isHovering: Bool, index: Int) {
+        print("INFO: handleHover - isHovering: \(isHovering), index: \(index), current: \(hoveredIndex?.description ?? "nil")")
+        
+        // 取消之前的防抖任务
+        hoverDebounceTask?.cancel()
+        hoverDebounceTask = nil
+        
+        if isHovering {
+            // 悬停进入：快速响应，带防抖
+            hoverDebounceTask = Task {
+                // 短暂延迟确保稳定悬停
+                try? await Task.sleep(nanoseconds: hoverEnterDelay)
+                
+                if !Task.isCancelled {
+                    await MainActor.run {
+                        guard !isHoverTransitioning else { return }
+                        
+                        isHoverTransitioning = true
+                        withAnimation(DesignTokens.Animation.fast) {
+                            hoveredIndex = index
+                        }
+                        
+                        // 短暂延迟后重置过渡状态
+                        Task {
+                            try? await Task.sleep(nanoseconds: 200_000_000)
+                            await MainActor.run {
+                                isHoverTransitioning = false
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // 悬停退出：延迟隐藏，防止快速切换造成的闪烁
+            hoverDebounceTask = Task {
+                try? await Task.sleep(nanoseconds: hoverExitDelay)
+                
+                if !Task.isCancelled {
+                    await MainActor.run {
+                        // 双重检查：确保没有新的悬停事件
+                        guard !isHoverTransitioning else { return }
+                        
+                        isHoverTransitioning = true
+                        withAnimation(DesignTokens.Animation.fast) {
+                            hoveredIndex = nil
+                        }
+                        
+                        // 重置过渡状态
+                        Task {
+                            try? await Task.sleep(nanoseconds: 200_000_000)
+                            await MainActor.run {
+                                isHoverTransitioning = false
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    /// 增强版浮动工具提示（独立层级，智能定位）
+    private func enhancedFloatingTooltip(for day: DailyUsage, at index: Int, geometry: GeometryProxy, barWidth: CGFloat) -> some View {
+        let chartWidth = geometry.size.width - 60
+        let totalSpacing = CGFloat(dailyUsage.count - 1) * 3
+        let availableWidth = chartWidth - totalSpacing
+        let actualBarWidth = availableWidth / CGFloat(dailyUsage.count)
+        
+        let xOffset = 60 + (actualBarWidth + 3) * CGFloat(index) + actualBarWidth / 2
+        
+        return enhancedTooltip(for: day)
+            .position(x: min(max(xOffset, 140), geometry.size.width - 140), y: 80)
+            .transition(.asymmetric(
+                insertion: .move(edge: .top).combined(with: .opacity),
+                removal: .opacity
+            ))
+            .zIndex(999) // 确保工具提示在最顶层
+    }
+    
     /// 增强版工具提示
     private func enhancedTooltip(for day: DailyUsage) -> some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
@@ -311,17 +501,15 @@ struct UsageChart: View {
         .background(
             RoundedRectangle(cornerRadius: DesignTokens.Size.Radius.medium)
                 .fill(DesignTokens.Colors.controlBackground)
-                .shadow(
-                    color: DesignTokens.Shadow.heavy.color,
-                    radius: DesignTokens.Shadow.heavy.radius,
-                    x: DesignTokens.Shadow.heavy.x,
-                    y: DesignTokens.Shadow.heavy.y
-                )
+                .shadow(color: Color.black.opacity(0.25), radius: 12, x: 0, y: 6)
         )
         .overlay(
             RoundedRectangle(cornerRadius: DesignTokens.Size.Radius.medium)
-                .stroke(DesignTokens.Colors.separator.opacity(0.5), lineWidth: 1)
+                .stroke(DesignTokens.Colors.separator.opacity(0.3), lineWidth: 0.5)
         )
+        .fixedSize() // 防止工具提示尺寸变化
+        .compositingGroup() // 优化渲染性能
+        .drawingGroup() // 减少图层渲染复杂度
     }
     
     /// 工具提示行
@@ -345,13 +533,15 @@ struct UsageChart: View {
         }
     }
     
-    /// 柱状图渐变色
-    private func barGradient(for day: DailyUsage) -> LinearGradient {
+    /// 增强版柱状图渐变色 - 支持悬停状态
+    private func barGradient(for day: DailyUsage, isHovered: Bool = false) -> LinearGradient {
         let baseColor = barColor(for: day)
+        let intensity = isHovered ? 1.0 : 0.85
+        
         return LinearGradient(
             colors: [
-                baseColor,
-                baseColor.opacity(0.7)
+                baseColor.opacity(intensity),
+                baseColor.opacity(intensity - 0.25)
             ],
             startPoint: .top,
             endPoint: .bottom
