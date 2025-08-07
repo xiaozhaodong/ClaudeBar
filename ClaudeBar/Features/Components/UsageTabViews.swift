@@ -25,7 +25,7 @@ struct OverviewTabView: View {
                 .fontWeight(.semibold)
                 .foregroundColor(DesignTokens.Colors.primaryText)
             
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: DesignTokens.Spacing.md) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: DesignTokens.Spacing.lg) {
                 TokenDetailCard(
                     title: "输入令牌",
                     value: formatTokenCount(statistics.totalInputTokens),
@@ -204,7 +204,8 @@ struct TokenDetailCard: View {
             RoundedRectangle(cornerRadius: DesignTokens.Size.Radius.medium)
                 .stroke(color.opacity(0.2), lineWidth: 1)
         )
-        .scaleEffect(isHovered ? 1.05 : 1.0)
+        .scaleEffect(isHovered ? 1.03 : 1.0)
+        .zIndex(isHovered ? 1 : 0)
         .onHover { hovering in
             withAnimation(DesignTokens.Animation.fast) {
                 isHovered = hovering
