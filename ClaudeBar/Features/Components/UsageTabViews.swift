@@ -406,9 +406,11 @@ struct ModelsTabView: View {
                     LazyVStack(spacing: DesignTokens.Spacing.md) {
                         ForEach(models) { model in
                             EnhancedModelDetailRow(model: model)
+                                .padding(.horizontal, DesignTokens.Spacing.sm)
                         }
                     }
                     .padding(.vertical, DesignTokens.Spacing.sm)
+                    .padding(.horizontal, DesignTokens.Spacing.xs)
                 }
             }
         }
@@ -579,9 +581,11 @@ struct ProjectsTabView: View {
                     LazyVStack(spacing: DesignTokens.Spacing.md) {
                         ForEach(projects) { project in
                             EnhancedProjectDetailRow(project: project)
+                                .padding(.horizontal, DesignTokens.Spacing.sm)
                         }
                     }
                     .padding(.vertical, DesignTokens.Spacing.sm)
+                    .padding(.horizontal, DesignTokens.Spacing.xs)
                 }
             }
         }
