@@ -54,11 +54,21 @@ struct UsageStatisticsView: View {
                         await viewModel.refreshStatistics()
                     }
                 }) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: DesignTokens.Typography.IconSize.medium))
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 14, weight: .medium))
+                        Text("刷新")
+                            .font(.system(size: 14, weight: .medium))
+                    }
+                    .foregroundColor(.blue)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.blue.opacity(0.1))
+                    )
                 }
-                .buttonStyle(.plain)
-                .foregroundColor(.blue)
+                .buttonStyle(PlainButtonStyle())
                 .disabled(viewModel.isLoading)
             }
             
