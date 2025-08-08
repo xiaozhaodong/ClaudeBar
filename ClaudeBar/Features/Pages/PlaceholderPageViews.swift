@@ -1134,7 +1134,7 @@ struct QuickActionsGrid: View {
                     icon: "arrow.clockwise",
                     color: .blue,
                     action: {
-                        Task { await appState.loadConfigs() }
+                        Task { await appState.forceRefreshConfigs() }
                     }
                 )
                 
@@ -1307,7 +1307,7 @@ struct UtilityToolsGrid: View {
     
     private func validateConfigs() {
         Task {
-            await appState.loadConfigs()
+            await appState.forceRefreshConfigs()
         }
     }
 }

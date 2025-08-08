@@ -7,6 +7,7 @@ class AppState: ObservableObject {
     @Published var currentConfig: ClaudeConfig?
     @Published var availableConfigs: [ClaudeConfig] = []
     @Published var isLoading: Bool = false
+    @Published var isSwitchingConfig: Bool = false
     @Published var errorMessage: String?
     @Published var successMessage: String?
     @Published var claudeProcessStatus: ProcessService.ProcessStatus = .unknown
@@ -18,6 +19,10 @@ class AppState: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var loadConfigsTask: Task<Void, Never>?
     private var successMessageTask: Task<Void, Never>?
+    
+    // 配置缓存机制
+    private var lastConfigLoadTime: Date?
+    private let configCacheValidityDuration: TimeInterval = 5 * 60 // 5分钟缓存有效期
     
     init(configService: ConfigServiceProtocol? = nil) {
         self.configService = configService ?? ModernConfigService()
@@ -73,6 +78,9 @@ class AppState: ObservableObject {
                 availableConfigs = configs
                 currentConfig = configService.getCurrentConfig()
                 
+                // 更新缓存时间戳
+                lastConfigLoadTime = Date()
+                
                 // 清除错误信息
                 errorMessage = nil
             } catch {
@@ -87,6 +95,30 @@ class AppState: ObservableObject {
         }
         
         await loadConfigsTask?.value
+    }
+    
+    /// 智能加载配置：只有在缓存过期或从未加载时才重新加载
+    func loadConfigsIfNeeded() async {
+        // 如果正在加载中，直接返回
+        guard !isLoading else { return }
+        
+        // 检查是否需要重新加载配置
+        let now = Date()
+        if let lastLoadTime = lastConfigLoadTime,
+           now.timeIntervalSince(lastLoadTime) < configCacheValidityDuration,
+           !availableConfigs.isEmpty {
+            // 缓存仍然有效且有配置数据，无需重新加载
+            return
+        }
+        
+        // 缓存过期或从未加载，执行加载
+        await loadConfigs()
+    }
+    
+    /// 强制刷新配置（用于用户主动刷新）
+    func forceRefreshConfigs() async {
+        lastConfigLoadTime = nil // 清除缓存时间戳
+        await loadConfigs()
     }
     
     /// 请求 ~/.claude 目录访问权限
@@ -140,10 +172,10 @@ class AppState: ObservableObject {
     
     func switchConfig(_ config: ClaudeConfig) async {
         // 防止重复操作
-        guard !isLoading else { return }
+        guard !isSwitchingConfig else { return }
         guard currentConfig?.name != config.name else { return }
         
-        isLoading = true
+        isSwitchingConfig = true
         errorMessage = nil
         successMessage = nil
         
@@ -158,7 +190,7 @@ class AppState: ObservableObject {
             print("API 端点切换错误: \(error)")
         }
         
-        isLoading = false
+        isSwitchingConfig = false
     }
     
     /// 显示成功消息，20秒后自动关闭

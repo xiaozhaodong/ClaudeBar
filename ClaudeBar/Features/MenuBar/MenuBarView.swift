@@ -269,7 +269,7 @@ struct CurrentConfigCard: View {
     
     private func refreshConfig() {
         Task {
-            await appState.loadConfigs()
+            await appState.forceRefreshConfigs()
         }
     }
     
@@ -433,7 +433,7 @@ struct ModernConfigListSection: View {
         
         refreshTask?.cancel()
         refreshTask = Task {
-            await appState.loadConfigs()
+            await appState.forceRefreshConfigs()
         }
     }
 }
@@ -896,7 +896,7 @@ struct ModernActionButtonsGrid: View {
                     color: .blue,
                     isCompact: false,
                     action: {
-                        Task { await appState.loadConfigs() }
+                        Task { await appState.forceRefreshConfigs() }
                     }
                 )
                 

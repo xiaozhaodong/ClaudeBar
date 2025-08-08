@@ -64,7 +64,7 @@ struct ConfigManagementHeader: View {
     private func refreshConfigs() {
         guard !appState.isLoading else { return }
         Task {
-            await appState.loadConfigs()
+            await appState.forceRefreshConfigs()
         }
     }
 }
@@ -385,7 +385,7 @@ struct ConfigurationsList: View {
                 do {
                     try await appState.configService.createConfig(newConfig)
                     appState.showSuccessMessage("成功创建 API 端点「\(configName)」")
-                    await appState.loadConfigs()
+                    await appState.forceRefreshConfigs()
                 } catch {
                     appState.showErrorMessage("创建端点失败：\(error.localizedDescription)")
                 }
@@ -404,7 +404,11 @@ struct ConfigManagementRowView: View {
     }
     
     private var isDisabled: Bool {
-        appState.isLoading || isCurrentConfig
+        isCurrentConfig
+    }
+    
+    private var isSwitchingThisConfig: Bool {
+        appState.isSwitchingConfig && !isCurrentConfig
     }
     
     var body: some View {
@@ -481,19 +485,26 @@ struct ConfigManagementRowView: View {
                 if !isCurrentConfig {
                     Button(action: switchToConfig) {
                         HStack(spacing: 4) {
-                            Image(systemName: "arrow.right.circle.fill")
-                                .font(.system(size: 12))
+                            if isSwitchingThisConfig {
+                                ProgressView()
+                                    .frame(width: 12, height: 12)
+                                    .scaleEffect(0.7)
+                                    .controlSize(.mini)
+                            } else {
+                                Image(systemName: "arrow.right.circle.fill")
+                                    .font(.system(size: 12))
+                            }
                             Text("切换")
                                 .font(.system(size: 12, weight: .medium))
                         }
                         .foregroundColor(.white)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
-                        .background(Color.blue)
+                        .background(isSwitchingThisConfig ? Color.blue.opacity(0.7) : Color.blue)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .disabled(isDisabled)
+                    .disabled(isDisabled || isSwitchingThisConfig)
                 }
                 
                 HStack(spacing: 8) {
@@ -571,7 +582,7 @@ struct ConfigManagementRowView: View {
     }
     
     private func switchToConfig() {
-        guard !appState.isLoading else { return }
+        guard !appState.isSwitchingConfig else { return }
         guard !isCurrentConfig else { return }
         
         Task {
@@ -601,7 +612,7 @@ struct ConfigManagementRowView: View {
                 do {
                     try await appState.configService.deleteConfig(config)
                     appState.showSuccessMessage("已删除 API 端点「\(config.name)」")
-                    await appState.loadConfigs()
+                    await appState.forceRefreshConfigs()
                 } catch {
                     appState.showErrorMessage("删除端点失败：\(error.localizedDescription)")
                 }

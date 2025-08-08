@@ -51,9 +51,9 @@ class StatusItemManager: ObservableObject {
         if popover.isShown {
             popover.performClose(nil)
         } else {
-            // 刷新配置数据
+            // 智能刷新：只有在必要时才刷新配置
             Task {
-                await appState.loadConfigs()
+                await appState.loadConfigsIfNeeded()
             }
             
             popover.show(relativeTo: statusButton.bounds, of: statusButton, preferredEdge: .minY)
