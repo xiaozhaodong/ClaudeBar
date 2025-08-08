@@ -84,14 +84,12 @@ struct NavigationContentView: View {
     var body: some View {
         VStack {
             switch selectedTab {
-            case .overview:
-                OverviewPageView(appState: appState)
             case .configManagement:
                 ConfigManagementPageView()
-            case .processMonitor:
-                ProcessMonitorPageView()
             case .usageStatistics:
                 UsageStatisticsView(configService: appState.configService)
+            case .processMonitor:
+                ProcessMonitorPageView()
             case .systemStatus:
                 SystemStatusPageView()
             case .toolbox:

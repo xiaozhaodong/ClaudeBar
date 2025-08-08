@@ -12,7 +12,7 @@ import SwiftUI
 struct MainPopoverView: View {
     @EnvironmentObject private var appState: AppState
     @StateObject private var viewModel = MenuBarViewModel()
-    @State private var selectedTab: NavigationTab = .overview
+    @State private var selectedTab: NavigationTab = .configManagement
     
     var body: some View {
         NavigationView {
