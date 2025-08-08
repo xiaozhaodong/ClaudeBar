@@ -80,25 +80,37 @@ struct NavigationTabItem: View {
 struct NavigationContentView: View {
     let selectedTab: NavigationTab
     @EnvironmentObject var appState: AppState
-    
+
     var body: some View {
-        VStack {
-            switch selectedTab {
-            case .configManagement:
-                ConfigManagementPageView()
-            case .usageStatistics:
-                UsageStatisticsView(configService: appState.configService)
-            case .processMonitor:
-                ProcessMonitorPageView()
-            case .systemStatus:
-                SystemStatusPageView()
-            case .toolbox:
-                ToolboxPageView()
-            case .settings:
-                SettingsPageView()
-            case .help:
-                HelpPageView()
-            }
+        ZStack {
+            // 所有视图都同时存在，但只显示选中的
+            ConfigManagementPageView()
+                .opacity(selectedTab == .configManagement ? 1 : 0)
+                .allowsHitTesting(selectedTab == .configManagement)
+
+            UsageStatisticsView(configService: appState.configService)
+                .opacity(selectedTab == .usageStatistics ? 1 : 0)
+                .allowsHitTesting(selectedTab == .usageStatistics)
+
+            ProcessMonitorPageView()
+                .opacity(selectedTab == .processMonitor ? 1 : 0)
+                .allowsHitTesting(selectedTab == .processMonitor)
+
+            SystemStatusPageView()
+                .opacity(selectedTab == .systemStatus ? 1 : 0)
+                .allowsHitTesting(selectedTab == .systemStatus)
+
+            ToolboxPageView()
+                .opacity(selectedTab == .toolbox ? 1 : 0)
+                .allowsHitTesting(selectedTab == .toolbox)
+
+            SettingsPageView()
+                .opacity(selectedTab == .settings ? 1 : 0)
+                .allowsHitTesting(selectedTab == .settings)
+
+            HelpPageView()
+                .opacity(selectedTab == .help ? 1 : 0)
+                .allowsHitTesting(selectedTab == .help)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.easeInOut(duration: 0.3), value: selectedTab)

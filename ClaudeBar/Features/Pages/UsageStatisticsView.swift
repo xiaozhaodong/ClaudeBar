@@ -24,38 +24,63 @@ struct UsageStatisticsView: View {
         .padding(.top, DesignTokens.Spacing.Page.padding)
         .onAppear {
             Task {
-                await viewModel.loadStatistics()
+                await viewModel.onPageAppear()
             }
+        }
+        .onDisappear {
+            viewModel.onPageDisappear()
         }
     }
     
     /// 页面标题区域
     private var pageHeaderView: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("使用统计")
-                    .font(DesignTokens.Typography.pageTitle)
-                    .foregroundColor(.primary)
+        VStack(spacing: DesignTokens.Spacing.md) {
+            HStack {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("使用统计")
+                        .font(DesignTokens.Typography.pageTitle)
+                        .foregroundColor(.primary)
+                    
+                    Text("跟踪您的 Claude 使用情况和成本")
+                        .font(DesignTokens.Typography.subtitle)
+                        .foregroundColor(.secondary)
+                }
                 
-                Text("跟踪您的 Claude 使用情况和成本")
-                    .font(DesignTokens.Typography.subtitle)
-                    .foregroundColor(.secondary)
+                Spacer()
+                
+                // 刷新按钮
+                Button(action: {
+                    Task {
+                        await viewModel.refreshStatistics()
+                    }
+                }) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: DesignTokens.Typography.IconSize.medium))
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.blue)
+                .disabled(viewModel.isLoading)
             }
             
-            Spacer()
+            // 缓存状态指示器
+            HStack {
+                CacheStatusIndicator(
+                    status: viewModel.cacheStatus,
+                    metadata: viewModel.cacheMetadata,
+                    onRefresh: {
+                        await viewModel.refreshStatistics()
+                    }
+                )
+                
+                Spacer()
+            }
             
-            // 刷新按钮
-            Button(action: {
-                Task {
+            // 缓存过期提醒（仅在即将过期时显示）
+            if let metadata = viewModel.cacheMetadata, metadata.isNearExpiry {
+                CacheExpiryReminder(metadata: metadata) {
                     await viewModel.refreshStatistics()
                 }
-            }) {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: DesignTokens.Typography.IconSize.medium))
             }
-            .buttonStyle(.plain)
-            .foregroundColor(.blue)
-            .disabled(viewModel.isLoading)
         }
         .padding(.horizontal, DesignTokens.Spacing.Page.padding)
     }
@@ -66,11 +91,8 @@ struct UsageStatisticsView: View {
             HStack(spacing: DesignTokens.Spacing.sm) {
                 ForEach(DateRange.allCases, id: \.self) { range in
                     Button(range.displayName) {
-                        withAnimation(DesignTokens.Animation.standard) {
-                            viewModel.selectedDateRange = range
-                        }
                         Task {
-                            await viewModel.loadStatistics()
+                            await viewModel.switchToDateRange(range)
                         }
                     }
                     .buttonStyle(.plain)
@@ -227,36 +249,28 @@ struct UsageStatisticsView: View {
                 title: "总成本",
                 value: statistics.formattedTotalCost,
                 icon: "dollarsign.circle",
-                color: .green,
-                trend: .up,
-                trendValue: "+12%"
+                color: .green
             )
             
             StatCard(
                 title: "总会话数",
                 value: statistics.formattedTotalSessions,
                 icon: "bubble.left.and.bubble.right",
-                color: .blue,
-                trend: .up,
-                trendValue: "+8%"
+                color: .blue
             )
             
             StatCard(
                 title: "总令牌数",
                 value: statistics.formattedTotalTokens,
                 icon: "doc.text",
-                color: .orange,
-                trend: .up,
-                trendValue: "+15%"
+                color: .orange
             )
             
             StatCard(
                 title: "平均每请求成本",
                 value: String(format: "$%.2f", statistics.averageCostPerRequest),
                 icon: "chart.line.uptrend.xyaxis",
-                color: .purple,
-                trend: .down,
-                trendValue: "-3%"
+                color: .purple
             )
         }
     }
@@ -354,17 +368,13 @@ struct StatCard: View {
     let icon: String
     let color: Color
     let gradient: LinearGradient
-    let trend: TrendDirection?
-    let trendValue: String?
     @State private var isHovered = false
     
-    init(title: String, value: String, icon: String, color: Color, trend: TrendDirection? = nil, trendValue: String? = nil) {
+    init(title: String, value: String, icon: String, color: Color) {
         self.title = title
         self.value = value
         self.icon = icon
         self.color = color
-        self.trend = trend
-        self.trendValue = trendValue
         
         // 根据颜色选择对应的渐变
         switch color {
@@ -385,16 +395,9 @@ struct StatCard: View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
             // 顶部图标行
             HStack {
-                HStack(spacing: 6) {
-                    Image(systemName: icon)
-                        .foregroundColor(color)
-                        .font(.system(size: DesignTokens.Typography.IconSize.medium, weight: .medium))
-                    
-                    // 趋势指示器
-                    if let trend = trend, let trendValue = trendValue {
-                        TrendIndicator(direction: trend, value: trendValue)
-                    }
-                }
+                Image(systemName: icon)
+                    .foregroundColor(color)
+                    .font(.system(size: DesignTokens.Typography.IconSize.medium, weight: .medium))
                 
                 Spacer()
             }
@@ -423,58 +426,6 @@ struct StatCard: View {
     }
 }
 
-/// 趋势指示器组件
-struct TrendIndicator: View {
-    let direction: TrendDirection
-    let value: String
-    
-    var body: some View {
-        HStack(spacing: 2) {
-            Image(systemName: direction.icon)
-                .foregroundColor(direction.color)
-                .font(.system(size: 10, weight: .bold))
-            
-            Text(value)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(direction.color)
-        }
-        .padding(.horizontal, 4)
-        .padding(.vertical, 2)
-        .background(
-            RoundedRectangle(cornerRadius: 4)
-                .fill(direction.color.opacity(0.1))
-        )
-    }
-}
-
-/// 趋势方向枚举
-enum TrendDirection {
-    case up
-    case down
-    case neutral
-    
-    var icon: String {
-        switch self {
-        case .up:
-            return "arrow.up"
-        case .down:
-            return "arrow.down"
-        case .neutral:
-            return "minus"
-        }
-    }
-    
-    var color: Color {
-        switch self {
-        case .up:
-            return DesignTokens.Colors.Trend.up
-        case .down:
-            return DesignTokens.Colors.Trend.down
-        case .neutral:
-            return DesignTokens.Colors.Trend.neutral
-        }
-    }
-}
 
 /// 概览标签页视图
 struct UsageOverviewTabView: View {

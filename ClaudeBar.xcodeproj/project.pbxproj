@@ -18,6 +18,8 @@
 		0B43D3DA2E3CFBE3007FC2B2 /* JSONLParserBenchmark.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B43D3D52E3CFBE3007FC2B2 /* JSONLParserBenchmark.swift */; };
 		0B79A6142E43335300B7640C /* ConfigServiceCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B79A6112E43335300B7640C /* ConfigServiceCoordinator.swift */; };
 		0B79A6162E43335300B7640C /* ModernConfigService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B79A6132E43335300B7640C /* ModernConfigService.swift */; };
+		0B79A6182E4594D300B7640C /* CacheStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B79A6172E4594D300B7640C /* CacheStatus.swift */; };
+		46D5DF5DEAB24D3399B43E61 /* CacheStatusIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46D5DF5DEAB24D3399B43E62 /* CacheStatusIndicator.swift */; };
 		0BCFFED82E3C56B20038AC59 /* DesignTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BCFFED72E3C56B20038AC59 /* DesignTokens.swift */; };
 		0BCFFEDC2E3C630F0038AC59 /* PricingModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BCFFED92E3C630F0038AC59 /* PricingModel.swift */; };
 		0BCFFEDD2E3C630F0038AC59 /* UsageEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BCFFEDA2E3C630F0038AC59 /* UsageEntry.swift */; };
@@ -48,7 +50,6 @@
 		A1234567890ABCDEF123457E /* ProcessService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1234567890ABCDEF123457F /* ProcessService.swift */; };
 		A1234567890ABCDEF1234580 /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1234567890ABCDEF1234581 /* Logger.swift */; };
 		ABB46F399B59497CBD13A3FC /* SidebarNavigationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C70A364E83A34C3AA9826464 /* SidebarNavigationView.swift */; };
-		CE372E936FC64DFFB0174484 /* OverviewPageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D68076706784E74B2151EFF /* OverviewPageView.swift */; };
 		E89B66304D3C430AB42BFFF8 /* ModernNavigationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4D51AE923CA40D1B7363A73 /* ModernNavigationView.swift */; };
 /* End PBXBuildFile section */
 
@@ -64,6 +65,8 @@
 		0B43D3D62E3CFBE3007FC2B2 /* StreamingJSONLParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingJSONLParser.swift; sourceTree = "<group>"; };
 		0B79A6112E43335300B7640C /* ConfigServiceCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigServiceCoordinator.swift; sourceTree = "<group>"; };
 		0B79A6132E43335300B7640C /* ModernConfigService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModernConfigService.swift; sourceTree = "<group>"; };
+		0B79A6172E4594D300B7640C /* CacheStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CacheStatus.swift; sourceTree = "<group>"; };
+		46D5DF5DEAB24D3399B43E62 /* CacheStatusIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CacheStatusIndicator.swift; sourceTree = "<group>"; };
 		0BCFFED72E3C56B20038AC59 /* DesignTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignTokens.swift; sourceTree = "<group>"; };
 		0BCFFED92E3C630F0038AC59 /* PricingModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PricingModel.swift; sourceTree = "<group>"; };
 		0BCFFEDA2E3C630F0038AC59 /* UsageEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageEntry.swift; sourceTree = "<group>"; };
@@ -72,7 +75,6 @@
 		0BCFFEE22E3C63CF0038AC59 /* JSONLParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONLParser.swift; sourceTree = "<group>"; };
 		0BCFFEE32E3C63CF0038AC59 /* UsageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageService.swift; sourceTree = "<group>"; };
 		0BCFFEE62E3C64D40038AC59 /* UsageStatisticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageStatisticsView.swift; sourceTree = "<group>"; };
-		5D68076706784E74B2151EFF /* OverviewPageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverviewPageView.swift; sourceTree = "<group>"; };
 		773A95E1AA1643B1A195C87E /* ProcessMonitorComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessMonitorComponents.swift; sourceTree = "<group>"; };
 		7B1A0ECE7C1F43C28C652C38 /* NavigationTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationTab.swift; sourceTree = "<group>"; };
 		A1234567890ABCDEF1234565 /* ClaudeBar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClaudeBar.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -134,7 +136,6 @@
 			isa = PBXGroup;
 			children = (
 				0BCFFEE62E3C64D40038AC59 /* UsageStatisticsView.swift */,
-				5D68076706784E74B2151EFF /* OverviewPageView.swift */,
 				F46B819AC9DA4A8DBC96635A /* ConfigManagementComponents.swift */,
 				773A95E1AA1643B1A195C87E /* ProcessMonitorComponents.swift */,
 				ED77A068BCB345B4B099FA5A /* PlaceholderPageViews.swift */,
@@ -150,6 +151,7 @@
 				0B3B8F2E2E3CBB0A00C77B88 /* UsageTabViews.swift */,
 				08D73174DF074A29BF2489D6 /* ActionComponents.swift */,
 				D5DF3FED19FB441DA3AA6B99 /* StatusComponents.swift */,
+				46D5DF5DEAB24D3399B43E62 /* CacheStatusIndicator.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -231,6 +233,7 @@
 		A1234567890ABCDEF123458B /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				0B79A6172E4594D300B7640C /* CacheStatus.swift */,
 				0BCFFED92E3C630F0038AC59 /* PricingModel.swift */,
 				0BCFFEDA2E3C630F0038AC59 /* UsageEntry.swift */,
 				0BCFFEDB2E3C630F0038AC59 /* UsageStatistics.swift */,
@@ -358,6 +361,8 @@
 				0B3B8F312E3CBB0A00C77B88 /* SkeletonLoader.swift in Sources */,
 				A1234567890ABCDEF1234576 /* MenuBarView.swift in Sources */,
 				0B43D3D92E3CFBE3007FC2B2 /* StreamingJSONLParser.swift in Sources */,
+				0B79A6182E4594D300B7640C /* CacheStatus.swift in Sources */,
+				46D5DF5DEAB24D3399B43E61 /* CacheStatusIndicator.swift in Sources */,
 				0B43D3DA2E3CFBE3007FC2B2 /* JSONLParserBenchmark.swift in Sources */,
 				A1234567890ABCDEF1234567 /* ClaudeBarApp.swift in Sources */,
 				0B3CE2A62E3B73B400BAEDF9 /* SupportingViews.swift in Sources */,
@@ -376,7 +381,6 @@
 				ABB46F399B59497CBD13A3FC /* SidebarNavigationView.swift in Sources */,
 				0BCFFEE12E3C63430038AC59 /* UsageStatisticsViewModel.swift in Sources */,
 				0BCFFED82E3C56B20038AC59 /* DesignTokens.swift in Sources */,
-				CE372E936FC64DFFB0174484 /* OverviewPageView.swift in Sources */,
 				1590F7AE2D3E4301A6FA4A63 /* PlaceholderPageViews.swift in Sources */,
 				326B435E6A4B46D983C3F1EA /* ActionComponents.swift in Sources */,
 				0DF2640FD782447FBB8D40A0 /* StatusComponents.swift in Sources */,

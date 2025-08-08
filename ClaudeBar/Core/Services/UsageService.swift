@@ -38,13 +38,89 @@ enum SessionSortOrder {
 }
 
 /// 使用统计服务实现
+actor UsageServiceActor {
+    private var cachedData: [String: CachedUsageData] = [:]
+    private let cacheExpiryInterval: TimeInterval
+    
+    init(cacheExpiryInterval: TimeInterval) {
+        self.cacheExpiryInterval = cacheExpiryInterval
+    }
+    
+    /// 获取缓存数据
+    func getCachedData(for key: String) -> CachedUsageData? {
+        guard var cached = cachedData[key] else {
+            return nil
+        }
+        
+        // 检查缓存状态
+        let status = cached.getCacheStatus()
+        
+        if status == .expired {
+            cachedData.removeValue(forKey: key)
+            return nil
+        }
+        
+        // 增加命中次数
+        cached.incrementHitCount()
+        cachedData[key] = cached
+        
+        return cached
+    }
+    
+    /// 设置缓存数据
+    func setCachedData(_ statistics: UsageStatistics, for key: String) {
+        cachedData[key] = CachedUsageData(
+            statistics: statistics,
+            cacheExpiryInterval: cacheExpiryInterval
+        )
+        
+        // 清理过期缓存
+        cleanupExpiredCache()
+    }
+    
+    /// 清理过期缓存
+    private func cleanupExpiredCache() {
+        cachedData = cachedData.filter { key, value in
+            value.getCacheStatus() != .expired
+        }
+    }
+    
+    /// 清除所有缓存（线程安全）
+    func clearAllCache() {
+        cachedData.removeAll()
+        Logger.shared.info("已清除所有缓存数据")
+    }
+    
+    /// 获取缓存统计信息（线程安全）
+    func getCacheStats() -> (count: Int, totalSize: Int, hitCount: Int) {
+        let count = cachedData.count
+        let totalSize = cachedData.values.reduce(0) { $0 + $1.dataSize }
+        let hitCount = cachedData.values.reduce(0) { $0 + $1.hitCount }
+        return (count: count, totalSize: totalSize, hitCount: hitCount)
+    }
+    
+    /// 获取缓存元数据
+    func getCacheMetadata(for key: String) -> CacheMetadata? {
+        guard let cached = cachedData[key] else {
+            return nil
+        }
+        return cached.getMetadata()
+    }
+    
+    /// 获取所有缓存统计信息
+    func getAllCacheMetadata() -> [String: CacheMetadata] {
+        return cachedData.mapValues { $0.getMetadata() }
+    }
+}
+
+/// 使用统计服务实现
 class UsageService: UsageServiceProtocol, ObservableObject {
     // 解析器选择：优先使用新的流式解析器
     private let legacyParser: JSONLParser
     private let streamingParser: StreamingJSONLParser
     private let configService: ConfigServiceProtocol
-    private var cachedData: [String: CachedUsageData] = [:]
-    private let cacheExpiryInterval: TimeInterval = 300 // 5分钟缓存
+    private let cacheActor: UsageServiceActor
+    private let cacheExpiryInterval: TimeInterval = 1800 // 30分钟缓存
     
     // 性能设置
     private let useStreamingParser: Bool
@@ -68,6 +144,7 @@ class UsageService: UsageServiceProtocol, ObservableObject {
         self.useStreamingParser = useStreamingParser
         self.streamingBatchSize = streamingBatchSize
         self.maxConcurrentFiles = maxConcurrentFiles
+        self.cacheActor = UsageServiceActor(cacheExpiryInterval: cacheExpiryInterval)
         
         // 初始化流式解析器
         self.streamingParser = StreamingJSONLParser(
@@ -83,26 +160,51 @@ class UsageService: UsageServiceProtocol, ObservableObject {
         dateRange: DateRange = .all,
         projectPath: String? = nil
     ) async throws -> UsageStatistics {
-        Logger.shared.info("开始获取使用统计数据，日期范围: \(dateRange.displayName)")
-        
-        await MainActor.run {
-            isLoading = true
-            errorMessage = nil
-        }
-        
-        defer {
-            Task { @MainActor in
-                isLoading = false
-                lastUpdateTime = Date()
-            }
-        }
-        
+        return try await getUsageStatistics(dateRange: dateRange, projectPath: projectPath, showLoading: true)
+    }
+
+    /// 获取使用统计数据（内部方法，可控制是否显示加载状态）
+    private func getUsageStatistics(
+        dateRange: DateRange = .all,
+        projectPath: String? = nil,
+        showLoading: Bool = true
+    ) async throws -> UsageStatistics {
+        Logger.shared.info("开始获取使用统计数据，日期范围: \(dateRange.displayName), 显示加载状态: \(showLoading)")
+
         do {
             // 检查缓存
             let cacheKey = "\(dateRange.rawValue)_\(projectPath ?? "all")"
-            if let cachedData = getCachedData(for: cacheKey) {
-                Logger.shared.info("使用缓存的统计数据")
+            Logger.shared.info("🔍 检查缓存，Key: \(cacheKey)")
+            if let cachedData = await cacheActor.getCachedData(for: cacheKey) {
+                Logger.shared.info("✅ 使用缓存的统计数据，状态: \(cachedData.getCacheStatus().displayName)")
+                // 缓存命中时不设置加载状态，直接返回数据
+                await MainActor.run {
+                    lastUpdateTime = Date()
+                }
                 return cachedData.statistics
+            } else {
+                Logger.shared.info("❌ 缓存未命中或已过期，需要重新加载")
+            }
+
+            // 只有在需要重新加载且要求显示加载状态时才设置加载状态
+            if showLoading {
+                await MainActor.run {
+                    isLoading = true
+                    errorMessage = nil
+                }
+            }
+
+            defer {
+                if showLoading {
+                    Task { @MainActor in
+                        isLoading = false
+                        lastUpdateTime = Date()
+                    }
+                } else {
+                    Task { @MainActor in
+                        lastUpdateTime = Date()
+                    }
+                }
             }
             
             // 获取 Claude 项目目录
@@ -190,7 +292,8 @@ class UsageService: UsageServiceProtocol, ObservableObject {
             let statistics = calculateStatistics(from: filteredEntries)
             
             // 缓存结果
-            setCachedData(statistics, for: cacheKey)
+            Logger.shared.info("💾 存储缓存数据，Key: \(cacheKey)")
+            await cacheActor.setCachedData(statistics, for: cacheKey)
             
             Logger.shared.info("✅ 统计数据获取完成：总成本 $\(String(format: "%.2f", statistics.totalCost)), 总会话数 \(statistics.totalSessions), 总令牌数 \(formatNumber(statistics.totalTokens)), 总条目数 \(filteredEntries.count)")
             return statistics
@@ -203,7 +306,15 @@ class UsageService: UsageServiceProtocol, ObservableObject {
             throw error
         }
     }
-    
+
+    /// 静默获取使用统计数据（不显示加载状态，用于缓存恢复）
+    func getUsageStatisticsSilently(
+        dateRange: DateRange = .all,
+        projectPath: String? = nil
+    ) async throws -> UsageStatistics {
+        return try await getUsageStatistics(dateRange: dateRange, projectPath: projectPath, showLoading: false)
+    }
+
     /// 获取会话统计数据
     func getSessionStatistics(
         dateRange: DateRange = .all,
@@ -437,38 +548,10 @@ class UsageService: UsageServiceProtocol, ObservableObject {
         return nil
     }
     
-    /// 获取缓存数据
-    private func getCachedData(for key: String) -> CachedUsageData? {
-        guard let cached = cachedData[key],
-              Date().timeIntervalSince(cached.timestamp) < cacheExpiryInterval else {
-            cachedData.removeValue(forKey: key)
-            return nil
-        }
-        return cached
-    }
-    
-    /// 设置缓存数据
-    private func setCachedData(_ statistics: UsageStatistics, for key: String) {
-        cachedData[key] = CachedUsageData(
-            statistics: statistics,
-            timestamp: Date()
-        )
-        
-        // 清理过期缓存
-        cleanupExpiredCache()
-    }
-    
-    /// 清理过期缓存
-    private func cleanupExpiredCache() {
-        let now = Date()
-        cachedData = cachedData.filter { key, value in
-            now.timeIntervalSince(value.timestamp) < cacheExpiryInterval
-        }
-    }
     
     /// 清除所有缓存
     func clearCache() async {
-        cachedData.removeAll()
+        await cacheActor.clearAllCache()
         
         // 如果使用流式解析器，也清除其缓存
         if useStreamingParser {
@@ -523,16 +606,20 @@ class UsageService: UsageServiceProtocol, ObservableObject {
        await clearCache()
     }
     
+    /// 获取缓存元数据
+    func getCacheMetadata(for dateRange: DateRange = .all, projectPath: String? = nil) async -> CacheMetadata? {
+        let cacheKey = "\(dateRange.rawValue)_\(projectPath ?? "all")"
+        return await cacheActor.getCacheMetadata(for: cacheKey)
+    }
+    
+    /// 获取所有缓存统计信息
+    func getAllCacheMetadata() async -> [String: CacheMetadata] {
+        return await cacheActor.getAllCacheMetadata()
+    }
+    
     /// 获取解析器性能统计
     func getParserStats() async -> UsageServiceStats? {
         return parserStats
-    }
-    
-    /// 切换解析器类型（用于测试和调试）
-    func switchParserType() {
-        // 注意：这个方法不能在运行时动态切换，只能通过重新初始化实现
-        Logger.shared.info("解析器切换需要重新初始化 UsageService")
-//        await clearCache()
     }
     
     /// 格式化数字显示（与测试脚本保持一致）
@@ -544,9 +631,72 @@ class UsageService: UsageServiceProtocol, ObservableObject {
 }
 
 /// 缓存的使用数据
-private struct CachedUsageData {
+struct CachedUsageData {
     let statistics: UsageStatistics
     let timestamp: Date
+    let cacheTime: Date
+    let expiryTime: Date
+    let dataSize: Int
+    private(set) var hitCount: Int
+    
+    init(statistics: UsageStatistics, cacheExpiryInterval: TimeInterval) {
+        self.statistics = statistics
+        self.timestamp = Date()
+        self.cacheTime = Date()
+        self.expiryTime = Date().addingTimeInterval(cacheExpiryInterval)
+        self.dataSize = Self.calculateDataSize(statistics)
+        self.hitCount = 0
+    }
+    
+    /// 计算统计数据的近似大小
+    private static func calculateDataSize(_ statistics: UsageStatistics) -> Int {
+        var size = 0
+        
+        // 基础统计数据
+        size += MemoryLayout<Double>.size * 4 // costs
+        size += MemoryLayout<Int>.size * 8 // token counts and session/request counts
+        
+        // 模型数据
+        size += statistics.byModel.count * 200 // 每个模型约200字节
+        
+        // 日期数据
+        size += statistics.byDate.count * 100 // 每个日期约100字节
+        
+        // 项目数据
+        size += statistics.byProject.count * 300 // 每个项目约300字节（包含路径）
+        
+        return size
+    }
+    
+    /// 增加命中次数
+    mutating func incrementHitCount() {
+        hitCount += 1
+    }
+    
+    /// 获取缓存状态
+    func getCacheStatus() -> CacheStatus {
+        let now = Date()
+        let timeToExpiry = expiryTime.timeIntervalSince(now)
+        
+        if timeToExpiry <= 0 {
+            return .expired
+        } else if timeToExpiry <= 300 { // 5分钟内过期
+            return .stale
+        } else {
+            return .fresh
+        }
+    }
+    
+    /// 获取缓存元数据
+    func getMetadata() -> CacheMetadata {
+        return CacheMetadata(
+            status: getCacheStatus(),
+            cacheTime: cacheTime,
+            expiryTime: expiryTime,
+            hitCount: hitCount,
+            dataSize: dataSize
+        )
+    }
 }
 
 /// 模型使用统计构建器
