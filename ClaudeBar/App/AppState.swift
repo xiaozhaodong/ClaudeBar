@@ -15,11 +15,18 @@ class AppState: ObservableObject {
     @Published var showingMainWindow: Bool = false
     @Published var migrationStatus: String?
     
+    // 使用统计相关状态
+    @Published var usageStatistics: UsageStatistics?
+    @Published var isLoadingUsage: Bool = false
+    @Published var usageErrorMessage: String?
+    
     internal var configService: ConfigServiceProtocol
     private let processService: ProcessService
+    private let usageService: UsageService
     private var cancellables = Set<AnyCancellable>()
     private var loadConfigsTask: Task<Void, Never>?
     private var successMessageTask: Task<Void, Never>?
+    private var loadUsageTask: Task<Void, Never>?
     
     // 配置缓存机制
     private var lastConfigLoadTime: Date?
@@ -28,6 +35,7 @@ class AppState: ObservableObject {
     init(configService: ConfigServiceProtocol? = nil) {
         self.configService = configService ?? ModernConfigService()
         self.processService = ProcessService()
+        self.usageService = UsageService(configService: self.configService)
         
         // 监听进程状态变化
         processService.$processStatus
@@ -38,6 +46,11 @@ class AppState: ObservableObject {
         // 启动时检查和执行迁移
         Task {
             await checkAndMigrate()
+        }
+        
+        // 预加载使用统计数据（不阻塞启动）
+        Task {
+            await loadUsageStatisticsInBackground()
         }
     }
     
@@ -261,7 +274,67 @@ class AppState: ObservableObject {
     deinit {
         loadConfigsTask?.cancel()
         successMessageTask?.cancel()
+        loadUsageTask?.cancel()
         cancellables.removeAll()
+    }
+    
+    // MARK: - 使用统计相关方法
+    
+    /// 后台加载使用统计数据（不显示加载状态）
+    private func loadUsageStatisticsInBackground() async {
+        do {
+            let stats = try await usageService.getUsageStatisticsSilently()
+            usageStatistics = stats
+            usageErrorMessage = nil
+        } catch {
+            usageErrorMessage = "加载使用统计失败: \(error.localizedDescription)"
+            print("后台加载使用统计失败: \(error)")
+        }
+    }
+    
+    /// 刷新使用统计数据
+    func refreshUsageStatistics() async {
+        guard !isLoadingUsage else { return }
+        
+        loadUsageTask?.cancel()
+        loadUsageTask = Task {
+            isLoadingUsage = true
+            usageErrorMessage = nil
+            
+            do {
+                let stats = try await usageService.getUsageStatistics()
+                
+                guard !Task.isCancelled else { return }
+                
+                usageStatistics = stats
+                usageErrorMessage = nil
+            } catch {
+                guard !Task.isCancelled else { return }
+                
+                usageErrorMessage = "刷新使用统计失败: \(error.localizedDescription)"
+                print("使用统计刷新错误: \(error)")
+            }
+            
+            isLoadingUsage = false
+        }
+        
+        await loadUsageTask?.value
+    }
+    
+    /// 打开主窗口并跳转到使用统计页面
+    @MainActor
+    func openUsageStatistics() {
+        guard !showingMainWindow else { 
+            // 如果窗口已打开，仅通知切换到使用统计页面
+            NotificationCenter.default.post(name: NSNotification.Name("NavigateToUsageStatistics"), object: nil)
+            return 
+        }
+        showingMainWindow = true
+        
+        // 延迟发送导航通知，确保窗口已显示
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            NotificationCenter.default.post(name: NSNotification.Name("NavigateToUsageStatistics"), object: nil)
+        }
     }
     
 }

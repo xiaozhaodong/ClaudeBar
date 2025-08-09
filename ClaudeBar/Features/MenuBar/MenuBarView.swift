@@ -728,6 +728,9 @@ struct ModernControlPanel: View {
                 // Claude 进程状态区域
                 ModernProcessStatusSection()
                 
+                // 使用统计状态区域
+                ModernUsageStatisticsSection()
+                
                 // 错误信息显示
                 if let errorMessage = appState.errorMessage {
                     ErrorMessageView(message: errorMessage)
@@ -737,9 +740,6 @@ struct ModernControlPanel: View {
                 if let successMessage = appState.successMessage {
                     SuccessMessageView(message: successMessage)
                 }
-                
-                // 操作按钮组
-                ModernActionButtonsGrid()
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
@@ -879,84 +879,255 @@ struct ErrorMessageView: View {
     }
 }
 
-struct ModernActionButtonsGrid: View {
+// MARK: - 使用统计状态区域（与进程状态区域风格统一）
+struct ModernUsageStatisticsSection: View {
     @EnvironmentObject private var appState: AppState
     
     var body: some View {
         VStack(spacing: 12) {
-            // 第一行：主要配置操作
-            HStack(spacing: 12) {
-                ActionButton(
-                    title: "刷新配置",
-                    icon: "arrow.clockwise",
-                    color: .blue,
-                    isCompact: false,
-                    action: {
-                        Task { await appState.forceRefreshConfigs() }
-                    }
-                )
+            // 使用统计标题和刷新按钮（与Claude进程标题保持一致的风格）
+            HStack {
+                Text("使用统计")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.primary)
                 
-                ActionButton(
-                    title: "配置目录",
-                    icon: "folder.fill",
-                    color: .blue,
-                    isCompact: false,
-                    action: { openConfigDirectory() }
-                )
+                Spacer()
+                
+                Button(action: refreshUsageStats) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.blue)
+                }
+                .buttonStyle(PlainButtonStyle())
             }
             
-            // 第二行：实用工具
-            HStack(spacing: 12) {
-                ActionButton(
-                    title: "新建配置",
-                    icon: "plus",
-                    color: .green,
-                    isCompact: false,
-                    action: { createNewConfig() }
-                )
-                
-                ActionButton(
-                    title: "帮助",
-                    icon: "questionmark.circle",
-                    color: .gray,
-                    isCompact: false,
-                    action: { showHelp() }
-                )
+            // 使用统计卡片内容（纯内容，无标题栏）
+            if appState.isLoadingUsage {
+                LoadingUsageStatsView()
+            } else if let statistics = appState.usageStatistics {
+                UsageStatsDisplayCard(statistics: statistics)
+            } else {
+                EmptyUsageStatsView()
             }
         }
     }
     
-    private func openConfigDirectory() {
-        let configDirectory = getRealClaudeConfigDirectory()
-        
-        let fileManager = FileManager.default
-        if !fileManager.fileExists(atPath: configDirectory.path) {
-            do {
-                try fileManager.createDirectory(at: configDirectory, 
-                                              withIntermediateDirectories: true, 
-                                              attributes: nil)
-            } catch {
-                print("创建配置目录失败: \(error)")
-                return
+    private func refreshUsageStats() {
+        Task {
+            await appState.refreshUsageStatistics()
+        }
+    }
+}
+
+// MARK: - 使用统计显示卡片（纯内容，无标题栏）
+struct UsageStatsDisplayCard: View {
+    let statistics: UsageStatistics
+    @EnvironmentObject private var appState: AppState
+    
+    var body: some View {
+        UsageStatsContent(statistics: statistics)
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(.controlBackgroundColor))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.blue.opacity(0.2), lineWidth: 1)
+                    )
+            )
+            .onTapGesture {
+                // 点击统计卡片打开主窗口的使用统计页面
+                appState.openUsageStatistics()
+            }
+    }
+}
+
+// MARK: - 使用统计内容组件
+struct UsageStatsContent: View {
+    let statistics: UsageStatistics
+    
+    var body: some View {
+        HStack(spacing: 16) {
+            // 总成本
+            StatisticColumn(
+                title: "总成本",
+                value: statistics.formattedTotalCost,
+                icon: "dollarsign.circle.fill",
+                color: .green
+            )
+            
+            // 分隔线
+            Rectangle()
+                .fill(Color.gray.opacity(0.2))
+                .frame(width: 1, height: 32)
+            
+            // 总会话
+            StatisticColumn(
+                title: "总会话",
+                value: statistics.formattedTotalSessions,
+                icon: "message.circle.fill",
+                color: .blue
+            )
+            
+            // 分隔线
+            Rectangle()
+                .fill(Color.gray.opacity(0.2))
+                .frame(width: 1, height: 32)
+            
+            // 总令牌
+            StatisticColumn(
+                title: "总令牌",
+                value: statistics.formattedTotalTokens,
+                icon: "cpu.fill",
+                color: .purple
+            )
+        }
+    }
+}
+
+struct StatisticColumn: View {
+    let title: String
+    let value: String
+    let icon: String
+    let color: Color
+    
+    var body: some View {
+        VStack(spacing: 6) {
+            // 图标
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(color)
+            
+            // 数值
+            Text(value)
+                .font(.system(size: 14, weight: .bold))
+                .foregroundColor(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            
+            // 标题
+            Text(title)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - 占位状态组件
+struct LoadingUsageStatsView: View {
+    var body: some View {
+        HStack(spacing: 16) {
+            ForEach(0..<3, id: \.self) { _ in
+                VStack(spacing: 6) {
+                    // 骨架图标
+                    Circle()
+                        .fill(Color.gray.opacity(0.2))
+                        .frame(width: 16, height: 16)
+                    
+                    // 骨架数值
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.gray.opacity(0.2))
+                        .frame(height: 14)
+                        .frame(maxWidth: 48)
+                    
+                    // 骨架标题
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.gray.opacity(0.15))
+                        .frame(height: 10)
+                        .frame(maxWidth: 32)
+                }
+                .frame(maxWidth: .infinity)
             }
         }
-        
-        NSWorkspace.shared.open(configDirectory)
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(.controlBackgroundColor))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                )
+        )
     }
+}
+
+struct ErrorUsageStatsView: View {
+    @EnvironmentObject private var appState: AppState
     
-    private func createNewConfig() {
-        // 这里可以添加创建新配置的逻辑
-        // 暂时先打开配置目录
-        openConfigDirectory()
-    }
-    
-    private func showHelp() {
-        // 打开帮助文档或显示帮助信息
-        if let url = URL(string: "https://github.com/anthropics/claude-cli") {
-            NSWorkspace.shared.open(url)
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundColor(.orange)
+            
+            Text("加载失败")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.primary)
+            
+            Text("点击重试")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(.controlBackgroundColor))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                )
+        )
+        .onTapGesture {
+            Task {
+                await appState.refreshUsageStatistics()
+            }
         }
     }
+}
+
+struct EmptyUsageStatsView: View {
+    @EnvironmentObject private var appState: AppState
     
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "chart.bar.fill")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundColor(.gray)
+            
+            Text("暂无数据")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.primary)
+            
+            Text("点击刷新")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(.controlBackgroundColor))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                )
+        )
+        .onTapGesture {
+            Task {
+                await appState.refreshUsageStatistics()
+            }
+        }
+    }
+}
+
+// MARK: - 辅助函数
+
+extension MenuBarView {
     private func getRealClaudeConfigDirectory() -> URL {
         let username = NSUserName()
         let realHomePath = "/Users/\(username)"
