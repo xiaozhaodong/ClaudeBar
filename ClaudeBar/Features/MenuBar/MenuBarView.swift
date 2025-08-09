@@ -725,11 +725,11 @@ struct ModernControlPanel: View {
                 .padding(.horizontal, 16)
             
             VStack(spacing: 12) {
-                // Claude 进程状态区域
-                ModernProcessStatusSection()
-                
                 // 使用统计状态区域
                 ModernUsageStatisticsSection()
+                
+                // Claude 进程状态区域
+                ModernProcessStatusSection()
                 
                 // 错误信息显示
                 if let errorMessage = appState.errorMessage {
