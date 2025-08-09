@@ -7,7 +7,7 @@
 
 import SwiftUI
 
-// MARK: - 配置管理页面组件
+// MARK: - API 配置管理页面组件
 
 struct ConfigManagementHeader: View {
     @EnvironmentObject private var appState: AppState

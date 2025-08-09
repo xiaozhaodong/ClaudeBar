@@ -1,8 +1,8 @@
-# Claude 配置管理器 - 安装和使用指南
+# Claude CLI API 切换器 - 安装和使用指南
 
 ## 概述
 
-Claude 配置管理器是一个 macOS 菜单栏应用，用于管理多个 Claude CLI 配置。它可以替代原有的 `switch-claude.sh` 脚本，提供图形化的配置管理界面。
+Claude CLI API 切换器是一个 macOS 菜单栏应用，用于管理多个 Claude CLI API 端点配置。它可以替代原有的 `switch-claude.sh` 脚本，提供图形化的 API 端点切换界面。
 
 ## 系统要求
 

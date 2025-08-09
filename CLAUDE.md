@@ -4,8 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-ClaudeBar 是一个 macOS 菜单栏应用，集成了 Claude CLI 配置管理和使用统计功能。主要特性：
-- **配置管理**: 管理多个 Claude CLI 配置，支持图形化切换
+ClaudeBar 是一个 macOS 菜单栏应用，集成了 Claude CLI API 端点切换和使用统计功能。主要特性：
+- **API 端点切换**: 管理多个 Claude CLI API 端点配置，支持图形化切换
 - **使用统计**: 实时监控 Claude 使用情况，提供详细的 token 统计和成本分析
 - **主窗口界面**: 提供完整的桌面界面，包含所有功能模块的导航
 - **替代工具**: 替代原有的 `switch-claude.sh` 脚本功能，提供更好的用户体验
@@ -114,7 +114,7 @@ Features/                # 功能特性层
 ├── Pages/
 │   ├── OverviewPageView.swift         # 概览页面
 │   ├── UsageStatisticsView.swift     # 使用统计页面
-│   ├── ConfigManagementComponents.swift # 配置管理组件
+│   ├── ConfigManagementComponents.swift # API 配置管理组件
 │   ├── ProcessMonitorComponents.swift   # 进程监控组件
 │   └── PlaceholderPageViews.swift       # 占位页面
 ├── Components/
@@ -141,7 +141,7 @@ Features/                # 功能特性层
 
 ### 核心功能特性
 
-#### 1. 配置管理
+#### 1. API 端点配置管理
 - 支持多种配置格式（老式和新式 API 配置）
 - 自动迁移 Token 到 Keychain
 - 配置文件热重载
@@ -244,7 +244,7 @@ EOF
 - 图表渲染: `TimelineChart.swift:body`
 - 成本计算: `PricingModel.swift:calculateCost`
 
-#### 配置管理功能
+#### API 端点配置管理功能
 - 配置加载: `ConfigService.swift:loadConfigurations`
 - Token 管理: `KeychainService.swift:storeToken/retrieveToken`
 - 配置切换: `MenuBarViewModel.swift:switchToConfiguration`

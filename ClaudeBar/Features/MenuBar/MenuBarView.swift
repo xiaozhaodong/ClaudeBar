@@ -64,7 +64,7 @@ struct ModernHeaderSection: View {
                 }
                 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Claude API 端点管理器")
+                    Text("Claude CLI API 切换器")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(.primary)
                     
@@ -1180,7 +1180,7 @@ struct BottomInfoSection: View {
                 }
                 
                 // 退出按钮
-                Button("退出 Claude 配置管理器") {
+                Button("退出 Claude CLI API 切换器") {
                     NSApplication.shared.terminate(nil)
                 }
                 .font(.system(size: 12, weight: .medium))

@@ -354,7 +354,7 @@ struct ConfigSettingsView: View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.Page.componentSpacing) {
             // 页面标题
             VStack(alignment: .leading, spacing: 8) {
-                Text("配置管理")
+                Text("API 配置管理")
                     .font(DesignTokens.Typography.pageTitle)
                     .foregroundColor(.primary)
                 
@@ -363,7 +363,7 @@ struct ConfigSettingsView: View {
                     .foregroundColor(.secondary)
             }
             
-            // 配置管理内容
+            // API 配置管理内容
             ModernConfigDirectorySection(
                 currentPath: $currentConfigPath,
                 isChangingDirectory: $isChangingDirectory
@@ -571,8 +571,8 @@ struct CompactConfigDirectorySection: View {
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             let openPanel = NSOpenPanel()
-            openPanel.title = "选择 Claude 配置目录"
-            openPanel.message = "请选择包含 Claude 配置文件的目录"
+            openPanel.title = "选择 Claude CLI 配置目录"
+            openPanel.message = "请选择包含 Claude CLI API 配置文件的目录"
             openPanel.canChooseFiles = false
             openPanel.canChooseDirectories = true
             openPanel.allowsMultipleSelection = false
@@ -697,7 +697,7 @@ struct CompactAboutSection: View {
                         .foregroundColor(.blue)
                     
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Claude 配置管理器")
+                        Text("Claude CLI API 切换器")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundColor(.primary)
                         
@@ -880,8 +880,8 @@ struct ModernConfigDirectorySection: View {
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             let openPanel = NSOpenPanel()
-            openPanel.title = "选择 Claude 配置目录"
-            openPanel.message = "请选择包含 Claude 配置文件的目录"
+            openPanel.title = "选择 Claude CLI 配置目录"
+            openPanel.message = "请选择包含 Claude CLI API 配置文件的目录"
             openPanel.canChooseFiles = false
             openPanel.canChooseDirectories = true
             openPanel.allowsMultipleSelection = false

@@ -66,7 +66,7 @@ struct SidebarHeaderSection: View {
                 }
                 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Claude 配置管理器")
+                    Text("Claude CLI API 切换器")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(.primary)
                     

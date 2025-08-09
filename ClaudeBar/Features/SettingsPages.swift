@@ -421,14 +421,14 @@ struct ConfigSettingsPage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             PageHeader(
-                title: "配置管理",
+                title: "API 配置管理",
                 subtitle: "管理 Claude CLI 配置文件和目录"
             )
             
             // 当前配置目录
             SettingsCard(
                 title: "配置目录",
-                subtitle: "Claude 配置文件的存储位置"
+                subtitle: "Claude CLI API 配置文件的存储位置"
             ) {
                 VStack(spacing: 16) {
                     // 目录信息展示
@@ -653,8 +653,8 @@ struct ConfigSettingsPage: View {
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             let openPanel = NSOpenPanel()
-            openPanel.title = "选择 Claude 配置目录"
-            openPanel.message = "请选择包含 Claude 配置文件的目录"
+            openPanel.title = "选择 Claude CLI 配置目录"
+            openPanel.message = "请选择包含 Claude CLI API 配置文件的目录"
             openPanel.canChooseFiles = false
             openPanel.canChooseDirectories = true
             openPanel.allowsMultipleSelection = false

@@ -215,7 +215,7 @@ class StatusItemManager: ObservableObject {
     }
     
     private func createToolTip() -> String {
-        var tooltip = "Claude 配置管理器"
+        var tooltip = "Claude CLI API 切换器"
         
         if appState.isLoading {
             tooltip += " - 加载中..."

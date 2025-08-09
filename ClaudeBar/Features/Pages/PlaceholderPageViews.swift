@@ -269,7 +269,7 @@ struct HelpPageView: View {
                         HelpStepItem(
                             step: "1",
                             title: "选择配置目录",
-                            description: "在设置页面中选择包含 Claude 配置文件的目录（通常是 ~/.claude）"
+                            description: "在设置页面中选择包含 Claude CLI API 配置文件的目录（通常是 ~/.claude）"
                         )
                         
                         HelpStepItem(
@@ -399,7 +399,7 @@ struct HelpPageView: View {
                         .padding(.horizontal, 24)
                     
                     VStack(spacing: 8) {
-                        Text("Claude 配置管理器")
+                        Text("Claude CLI API 切换器")
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundColor(.primary)
                         
@@ -577,9 +577,9 @@ struct DirectoryStatusCard: View {
             VStack(spacing: 12) {
                 DirectoryStatusRow(
                     path: configDirectoryPath,
-                    name: "Claude 配置目录",
+                    name: "Claude CLI 配置目录",
                     icon: "gearshape.2.fill",
-                    description: "存放 Claude CLI 配置文件"
+                    description: "存放 Claude CLI API 端点配置"
                 )
                 
                 DirectoryStatusRow(
@@ -1148,7 +1148,7 @@ struct QuickActionsGrid: View {
                 
                 ToolboxActionCard(
                     title: "新建配置",
-                    description: "创建新的 Claude 配置",
+                    description: "创建新的 Claude CLI API 配置",
                     icon: "plus.circle.fill",
                     color: .green,
                     action: { createNewConfig() }

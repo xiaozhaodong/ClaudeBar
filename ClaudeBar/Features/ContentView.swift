@@ -5,7 +5,7 @@ struct ContentView: View {
     
     var body: some View {
         VStack(spacing: 20) {
-            Text("Claude 配置管理器")
+            Text("Claude CLI API 切换器")
                 .font(.title)
                 .fontWeight(.bold)
             
@@ -18,8 +18,8 @@ struct ContentView: View {
                     .font(.headline)
                 
                 Text("• 点击菜单栏图标查看和切换配置")
-                Text("• 支持多个 Claude 配置文件管理")
-                Text("• 自动检测 ~/.claude 目录中的配置")
+                Text("• 支持多个 Claude CLI API 端点管理")
+                Text("• 自动检测 ~/.claude 目录中的 API 配置")
             }
             .padding()
             .background(Color.gray.opacity(0.1))

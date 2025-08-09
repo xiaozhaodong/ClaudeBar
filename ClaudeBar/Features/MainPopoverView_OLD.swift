@@ -130,7 +130,7 @@ enum NavigationTab: String, CaseIterable, Identifiable {
         case .overview:
             return "概览"
         case .configManagement:
-            return "配置管理"
+            return "API 配置管理"
         case .processMonitor:
             return "进程监控"
         case .systemStatus:
@@ -1247,7 +1247,7 @@ struct MainContentHeaderSection: View {
                             .font(.system(size: 14))
                             .foregroundColor(.secondary)
                     } else {
-                        Text("配置管理")
+                        Text("API 配置管理")
                             .font(.system(size: 18, weight: .semibold))
                             .foregroundColor(.primary)
                         
@@ -1566,7 +1566,7 @@ struct ConfigManagementPageView: View {
                 .padding(24)
             }
         }
-        .navigationTitle("配置管理")
+        .navigationTitle("API 配置管理")
     }
 }
 
@@ -1864,11 +1864,11 @@ struct ConfigManagementHeader: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("配置管理")
+                    Text("API 配置管理")
                         .font(.system(size: 20, weight: .semibold))
                         .foregroundColor(.primary)
                     
-                    Text("管理您的 Claude CLI 配置文件")
+                    Text("管理您的 Claude CLI API 端点配置")
                         .font(.system(size: 14))
                         .foregroundColor(.secondary)
                 }
