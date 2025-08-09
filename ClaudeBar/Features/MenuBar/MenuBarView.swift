@@ -36,10 +36,6 @@ struct MenuBarView: View {
         .onAppear {
             viewModel.setAppState(appState)
         }
-        .sheet(isPresented: $appState.showingSettings) {
-            SettingsView(isPresented: $appState.showingSettings)
-                .environmentObject(appState)
-        }
     }
 }
 
@@ -83,11 +79,11 @@ struct ModernHeaderSection: View {
                 
                 Spacer()
                 
-                // 设置按钮
+                // 打开主界面按钮
                 Button(action: {
-                    appState.showingSettings = true
+                    appState.openMainWindow()
                 }) {
-                    Image(systemName: "gearshape.fill")
+                    Image(systemName: "macwindow")
                         .font(.system(size: 14))
                         .foregroundColor(.secondary)
                         .frame(width: 24, height: 24)

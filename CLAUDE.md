@@ -7,6 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ClaudeBar 是一个 macOS 菜单栏应用，集成了 Claude CLI 配置管理和使用统计功能。主要特性：
 - **配置管理**: 管理多个 Claude CLI 配置，支持图形化切换
 - **使用统计**: 实时监控 Claude 使用情况，提供详细的 token 统计和成本分析
+- **主窗口界面**: 提供完整的桌面界面，包含所有功能模块的导航
 - **替代工具**: 替代原有的 `switch-claude.sh` 脚本功能，提供更好的用户体验
 
 ## 常用构建和开发命令
@@ -49,6 +50,19 @@ open ClaudeBar.xcodeproj
 # 还有独立的测试脚本位于 tests/ 目录
 # 这些测试主要用于验证使用统计和进程监控功能
 ```
+
+## 重要架构决策
+
+### 菜单栏与主窗口集成
+应用采用双模式设计：
+- **菜单栏模式**: 使用 `NSApp.setActivationPolicy(.accessory)`，仅显示菜单栏，隐藏 Dock 图标
+- **主窗口模式**: 使用 `NSApp.setActivationPolicy(.regular)`，显示完整桌面界面和 Dock 图标
+- **窗口管理**: 通过 `NSWindowDelegate.windowShouldClose` 拦截关闭事件，实现窗口隐藏而非真正关闭
+
+关键实现点：
+- `AppDelegate` 实现 `NSWindowDelegate` 协议，处理窗口生命周期
+- 菜单栏按钮触发主窗口显示，通过 `AppState.openMainWindow()` 控制
+- 窗口关闭时自动切换回菜单栏模式，保持应用运行状态
 
 ## 代码架构
 
@@ -123,6 +137,7 @@ Features/                # 功能特性层
 4. **错误处理**: 完整的错误类型定义和用户友好的错误消息
 5. **状态管理**: 使用 ObservableObject 和 @Published 进行响应式状态管理
 6. **实时监控**: 通过 ProcessService 和 UsageService 实现 Claude 进程和使用情况的实时监控
+7. **窗口状态同步**: AppState 管理主窗口显示状态，AppDelegate 负责实际窗口操作
 
 ### 核心功能特性
 
@@ -213,6 +228,7 @@ EOF
 5. **调整权限**: 修改 `ClaudeBar.entitlements` 文件
 6. **更新图标**: 编辑 `Assets.xcassets/AppIcon.appiconset`
 7. **优化性能**: 关注 `StreamingJSONLParser.swift` 和相关的异步处理逻辑
+8. **窗口行为修改**: 在 `AppDelegate.swift` 中修改窗口管理逻辑，特别是 `showMainWindow()` 和 `hideMainWindow()` 方法
 
 ### 发布流程
 1. 运行 `./verify.sh` 验证代码和项目结构
@@ -236,4 +252,10 @@ EOF
 #### 进程监控功能
 - 进程检测: `ProcessService.swift:checkClaudeProcess`
 - 状态更新: `AppState.swift:claudeProcessStatus`
+
+#### 窗口管理功能
+- 窗口状态控制: `AppState.swift:showingMainWindow`
+- 窗口显示逻辑: `AppDelegate.swift:showMainWindow/hideMainWindow`
+- 关闭事件拦截: `AppDelegate.swift:windowShouldClose`
+- 应用策略切换: `NSApp.setActivationPolicy(.regular/.accessory)`
 

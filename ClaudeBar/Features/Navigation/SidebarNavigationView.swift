@@ -96,23 +96,58 @@ struct SidebarHeaderSection: View {
 // MARK: - Sidebar Bottom Section
 
 struct SidebarBottomSection: View {
-    
+    @EnvironmentObject private var appState: AppState
+
     var body: some View {
         VStack(spacing: 0) {
             Rectangle()
                 .fill(Color(.separatorColor))
                 .frame(height: 1)
-            
-            HStack {
-                Text("版本 1.0.0")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.secondary)
-                
-                Spacer()
-                
-                Text("现在设置和帮助都在左侧导航菜单中")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.secondary)
+
+            VStack(spacing: 8) {
+                // 关闭按钮
+                HStack {
+                    Spacer()
+
+                    Button(action: {
+                        appState.closeMainWindow()
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 14))
+                                .foregroundColor(.secondary)
+
+                            Text("关闭窗口")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.gray.opacity(0.1))
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .onHover { hovering in
+                        // 可以添加悬停效果
+                    }
+
+                    Spacer()
+                }
+
+                // 版本信息
+                HStack {
+                    Text("版本 1.0.0")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.secondary)
+
+                    Spacer()
+
+                    Text("菜单栏应用")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)

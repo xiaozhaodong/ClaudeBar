@@ -12,6 +12,7 @@ class AppState: ObservableObject {
     @Published var successMessage: String?
     @Published var claudeProcessStatus: ProcessService.ProcessStatus = .unknown
     @Published var showingSettings: Bool = false
+    @Published var showingMainWindow: Bool = false
     @Published var migrationStatus: String?
     
     internal var configService: ConfigServiceProtocol
@@ -235,6 +236,26 @@ class AppState: ObservableObject {
     /// 显示错误消息
     func showErrorMessage(_ message: String) {
         self.errorMessage = message
+    }
+    
+    /// 打开主窗口
+    @MainActor
+    func openMainWindow() {
+        guard !showingMainWindow else { return } // 防止重复操作
+        showingMainWindow = true
+    }
+    
+    /// 关闭主窗口
+    @MainActor
+    func closeMainWindow() {
+        guard showingMainWindow else { return } // 防止重复操作
+        showingMainWindow = false
+    }
+    
+    /// 切换主窗口显示状态
+    @MainActor
+    func toggleMainWindow() {
+        showingMainWindow.toggle()
     }
     
     deinit {

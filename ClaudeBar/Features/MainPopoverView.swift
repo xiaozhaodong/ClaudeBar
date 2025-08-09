@@ -25,6 +25,10 @@ struct MainPopoverView: View {
         .onAppear {
             viewModel.setAppState(appState)
         }
+        .onDisappear {
+            // 当视图消失时，确保状态同步
+            // 这里不需要手动设置 showingMainWindow = false，因为 AppDelegate 已经处理了
+        }
     }
 }
 
