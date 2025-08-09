@@ -152,10 +152,12 @@ struct CurrentConfigCard: View {
                         }
                         
                         VStack(alignment: .leading, spacing: 2) {
-                            HStack {
+                            HStack(spacing: 8) {
                                 Text(currentConfig.name)
                                     .font(.system(size: 15, weight: .semibold))
                                     .foregroundColor(.primary)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
                                 
                                 Text("当前 API 端点")
                                     .font(.system(size: 11, weight: .medium))
@@ -172,19 +174,6 @@ struct CurrentConfigCard: View {
                         }
                         
                         Spacer()
-                        
-                        // 快速操作按钮
-                        HStack(spacing: 8) {
-                            QuickActionButton(
-                                icon: "arrow.clockwise",
-                                action: { refreshConfig() }
-                            )
-                            
-                            QuickActionButton(
-                                icon: "doc.text",
-                                action: { openConfigFile() }
-                            )
-                        }
                     }
                     
                     // 配置详情
@@ -614,6 +603,9 @@ struct ModernConfigRow: View {
                         Text(config.name)
                             .font(.system(size: 14, weight: isCurrentConfig ? .semibold : .medium))
                             .foregroundColor(.primary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .layoutPriority(1)
                         
                         if isCurrentConfig {
                             Text("当前")
@@ -625,7 +617,7 @@ struct ModernConfigRow: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 3))
                         }
                         
-                        Spacer()
+                        Spacer(minLength: 4)
                         
                         // 配置状态图标
                         Image(systemName: config.isValid ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
