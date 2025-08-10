@@ -4,6 +4,10 @@ import Foundation
 class PricingModel {
     static let shared = PricingModel()
     
+    // 添加缓存以提高性能
+    private var modelNameCache: [String: String] = [:]
+    private let cacheQueue = DispatchQueue(label: "com.claudebar.pricingmodel.cache", attributes: .concurrent)
+    
     private init() {}
     
     /// 模型定价配置（每百万令牌的美元价格）
@@ -138,6 +142,28 @@ class PricingModel {
     
     /// 标准化模型名称以匹配定价表
     private func normalizeModelName(_ model: String) -> String {
+        // 先检查缓存
+        let cachedValue = cacheQueue.sync {
+            return modelNameCache[model]
+        }
+        
+        if let cached = cachedValue {
+            return cached
+        }
+        
+        // 执行标准化
+        let normalized = performNormalization(model)
+        
+        // 存储到缓存
+        cacheQueue.async(flags: .barrier) {
+            self.modelNameCache[model] = normalized
+        }
+        
+        return normalized
+    }
+    
+    /// 实际执行模型名称标准化
+    private func performNormalization(_ model: String) -> String {
         let normalized = model.lowercased().replacingOccurrences(of: "-", with: "")
         
         // 映射到定价表中的键 - 支持 ccusage 常见格式

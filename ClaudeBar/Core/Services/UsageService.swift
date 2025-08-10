@@ -136,8 +136,8 @@ class UsageService: UsageServiceProtocol, ObservableObject {
         legacyParser: JSONLParser = JSONLParser(),
         configService: ConfigServiceProtocol,
         useStreamingParser: Bool = true,
-        streamingBatchSize: Int = 1000,
-        maxConcurrentFiles: Int = 4
+        streamingBatchSize: Int = 2000,  // 增加批处理大小从 1000 到 2000
+        maxConcurrentFiles: Int = 8       // 增加并发文件数从 4 到 8
     ) {
         self.legacyParser = legacyParser
         self.configService = configService
@@ -150,7 +150,7 @@ class UsageService: UsageServiceProtocol, ObservableObject {
         self.streamingParser = StreamingJSONLParser(
             batchSize: streamingBatchSize,
             maxConcurrentFiles: maxConcurrentFiles,
-            streamBufferSize: 64 * 1024,
+            streamBufferSize: 128 * 1024,  // 增加缓冲区大小从 64KB 到 128KB
             cacheExpiry: 3600 // 1小时缓存
         )
     }

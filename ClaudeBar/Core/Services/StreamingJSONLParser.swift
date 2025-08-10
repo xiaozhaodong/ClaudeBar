@@ -367,7 +367,7 @@ class StreamingJSONLParser {
                 var jsonlFiles: [URL] = []
                 let resourceKeys = Set<URLResourceKey>([.nameKey, .isDirectoryKey, .fileSizeKey])
                 
-                // 使用递归枚举器遍历所有子目录
+                // 使用递归枚举器遍历所有子目录 - 优化：逐个处理而不是一次性加载
                 if let enumerator = FileManager.default.enumerator(
                     at: directory,
                     includingPropertiesForKeys: Array(resourceKeys),
@@ -377,17 +377,19 @@ class StreamingJSONLParser {
                         return true // 继续枚举
                     }
                 ) {
-                    let urls = enumerator.allObjects.compactMap { $0 as? URL }
-                    for fileURL in urls {
-                        do {
-                            let resourceValues = try fileURL.resourceValues(forKeys: resourceKeys)
-                            
-                            if let isDirectory = resourceValues.isDirectory, !isDirectory,
-                               let name = resourceValues.name, name.hasSuffix(".jsonl") {
-                                jsonlFiles.append(fileURL)
+                    // 逐个处理文件，避免一次性加载所有对象到内存
+                    for case let fileURL as URL in enumerator {
+                        autoreleasepool {
+                            do {
+                                let resourceValues = try fileURL.resourceValues(forKeys: resourceKeys)
+                                
+                                if let isDirectory = resourceValues.isDirectory, !isDirectory,
+                                   let name = resourceValues.name, name.hasSuffix(".jsonl") {
+                                    jsonlFiles.append(fileURL)
+                                }
+                            } catch {
+                                Logger.shared.warning("获取文件属性失败: \(fileURL.path) - \(error.localizedDescription)")
                             }
-                        } catch {
-                            Logger.shared.warning("获取文件属性失败: \(fileURL.path) - \(error.localizedDescription)")
                         }
                     }
                 }
