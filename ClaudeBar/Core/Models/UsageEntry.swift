@@ -15,6 +15,8 @@ struct UsageEntry: Codable {
     let messageId: String?  // 添加 messageId 字段以支持 ccusage 风格的去重
     let messageType: String
     
+    // 移除缓存字段，改用全局缓存策略
+    
     private enum CodingKeys: String, CodingKey {
         case timestamp
         case model
@@ -28,6 +30,7 @@ struct UsageEntry: Codable {
         case requestId = "request_id"
         case messageId = "message_id"  // 添加 messageId 的编码键
         case messageType = "message_type"
+        // _cachedDateString 不参与序列化
     }
     
     /// 总令牌数
@@ -35,9 +38,10 @@ struct UsageEntry: Codable {
         return inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens
     }
     
-    /// 日期字符串（YYYY-MM-DD 格式）
+    /// 日期字符串（YYYY-MM-DD 格式，使用本地时区）
     var dateString: String {
-        return String(timestamp.prefix(10))
+        // 使用全局缓存和优化的日期格式化方式
+        return DateStringCache.shared.getDateString(for: timestamp)
     }
     
     /// 项目名称（从路径中提取）
@@ -232,6 +236,58 @@ struct RawJSONLEntry: Codable {
     }
 }
 
+/// 全局日期字符串缓存（性能优化）
+private class DateStringCache {
+    static let shared = DateStringCache()
+    private var cache: [String: String] = [:]
+    private let queue = DispatchQueue(label: "DateStringCache", attributes: .concurrent)
+    
+    private init() {}
+    
+    func getDateString(for timestamp: String) -> String {
+        return queue.sync {
+            if let cached = cache[timestamp] {
+                return cached
+            }
+            
+            let computed = Date.formatDateLikeCcusage(timestamp)
+            
+            // 写操作需要barrier
+            queue.async(flags: .barrier) {
+                self.cache[timestamp] = computed
+                
+                // 防止缓存无限增长，保留最近1000个条目
+                if self.cache.count > 1000 {
+                    let sortedKeys = Array(self.cache.keys.sorted())
+                    let keysToRemove = Array(sortedKeys.prefix(self.cache.count - 800))
+                    for key in keysToRemove {
+                        self.cache.removeValue(forKey: key)
+                    }
+                }
+            }
+            
+            return computed
+        }
+    }
+}
+
+/// 全局日期格式化器（性能优化）
+private struct DateFormatters {
+    static let iso8601: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+    
+    static let localDate: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.locale = Locale(identifier: "en-CA")
+        formatter.timeZone = TimeZone.current
+        return formatter
+    }()
+}
+
 /// 扩展 Date 以支持 ISO 字符串转换
 extension Date {
     func toISOString() -> String {
@@ -240,23 +296,14 @@ extension Date {
         return formatter.string(from: self)
     }
     
-    /// ccusage 风格的日期格式化方法
+    /// ccusage 风格的日期格式化方法（高性能版本）
     /// 参考测试脚本第470-485行的formatDateLikeCcusage函数
     static func formatDateLikeCcusage(_ timestamp: String) -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-
-        guard let date = formatter.date(from: timestamp) else {
+        guard let date = DateFormatters.iso8601.date(from: timestamp) else {
             // 如果解析失败，回退到简单的字符串截取
             return String(timestamp.prefix(10))
         }
-
-        // 使用en-CA locale确保YYYY-MM-DD格式（与ccusage一致）
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd"
-        dateFormatter.locale = Locale(identifier: "en-CA")
-        dateFormatter.timeZone = TimeZone.current // 使用系统时区
-
-        return dateFormatter.string(from: date)
+        
+        return DateFormatters.localDate.string(from: date)
     }
 }

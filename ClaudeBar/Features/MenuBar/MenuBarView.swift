@@ -917,20 +917,26 @@ struct UsageStatsDisplayCard: View {
     @EnvironmentObject private var appState: AppState
     
     var body: some View {
-        UsageStatsContent(statistics: statistics)
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color(.controlBackgroundColor))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.blue.opacity(0.2), lineWidth: 1)
-                    )
-            )
-            .onTapGesture {
-                // 点击统计卡片打开主窗口的使用统计页面
-                appState.openUsageStatistics()
-            }
+        VStack(spacing: 8) {
+            // 总体统计
+            UsageStatsContent(statistics: statistics)
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(.controlBackgroundColor))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.blue.opacity(0.2), lineWidth: 1)
+                        )
+                )
+            
+            // 最近三天统计
+            RecentDaysUsageView(statistics: statistics)
+        }
+        .onTapGesture {
+            // 点击统计卡片打开主窗口的使用统计页面
+            appState.openUsageStatistics()
+        }
     }
 }
 
@@ -1004,6 +1010,197 @@ struct StatisticColumn: View {
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - 最近三天使用数据组件
+struct RecentDaysUsageView: View {
+    let statistics: UsageStatistics
+    
+    var body: some View {
+        VStack(spacing: 6) {
+            // 标题行
+            HStack {
+                Text("最近三天")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.secondary)
+                
+                Spacer()
+                
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 12)
+            
+            // 每日数据
+            VStack(spacing: 4) {
+                ForEach(getRecentDaysData(), id: \.dayLabel) { dayData in
+                    RecentDayRow(dayData: dayData)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(.controlBackgroundColor))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.gray.opacity(0.15), lineWidth: 1)
+                    )
+            )
+        }
+    }
+    
+    // 获取最近三天的数据
+    private func getRecentDaysData() -> [RecentDayData] {
+        var result: [RecentDayData] = []
+        
+        // 现在 UsageEntry.dateString 已经使用正确的本地时区转换
+        // statistics.byDate 中的日期已经是按本地日期分组的
+        // 所以直接按照本地日期查找即可
+        let calendar = Calendar.current
+        let now = Date()
+        
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        dateFormatter.locale = Locale(identifier: "en-CA")
+        dateFormatter.timeZone = TimeZone.current  // 使用系统时区，与 ccusage 一致
+        
+        // 获取最近三天的日期（今天、昨天、前天）
+        for dayOffset in 0...2 {
+            guard let targetDate = calendar.date(byAdding: .day, value: -dayOffset, to: now) else { continue }
+            let dateString = dateFormatter.string(from: targetDate)
+            
+            let dayLabel: String
+            switch dayOffset {
+            case 0:
+                dayLabel = "今天"
+            case 1:
+                dayLabel = "昨天"
+            case 2:
+                dayLabel = "前天"
+            default:
+                dayLabel = "其他"
+            }
+            
+            // 查找对应日期的数据
+            let dayUsage = statistics.byDate.first { $0.date == dateString }
+            
+            result.append(RecentDayData(
+                dayLabel: dayLabel,
+                date: dateString,
+                cost: dayUsage?.totalCost ?? 0,
+                tokens: dayUsage?.totalTokens ?? 0
+            ))
+        }
+        
+        return result
+    }
+}
+
+// 最近一天的数据模型
+struct RecentDayData {
+    let dayLabel: String
+    let date: String
+    let cost: Double
+    let tokens: Int
+    
+    var formattedCost: String {
+        if cost == 0 {
+            return "-"
+        }
+        return String(format: "$%.2f", cost)
+    }
+    
+    var formattedTokens: String {
+        if tokens == 0 {
+            return "-"
+        } else if tokens >= 1_000_000 {
+            return String(format: "%.1fM", Double(tokens) / 1_000_000)
+        } else if tokens >= 1_000 {
+            return String(format: "%.1fK", Double(tokens) / 1_000)
+        } else {
+            return "\(tokens)"
+        }
+    }
+}
+
+// 最近一天的数据行
+struct RecentDayRow: View {
+    let dayData: RecentDayData
+    @State private var isHovered = false
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            // 日期标签
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(dayLabelColor)
+                    .frame(width: 6, height: 6)
+                
+                Text(dayData.dayLabel)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.primary)
+                    .frame(minWidth: 32, alignment: .leading)
+            }
+            
+            Spacer()
+            
+            // 成本
+            HStack(spacing: 4) {
+                Image(systemName: "dollarsign.circle.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(.green)
+                
+                Text(dayData.formattedCost)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(dayData.cost > 0 ? .primary : .secondary)
+                    .frame(minWidth: 45, alignment: .trailing)
+            }
+            
+            // 分隔线
+            Rectangle()
+                .fill(Color.gray.opacity(0.2))
+                .frame(width: 1, height: 12)
+            
+            // 令牌数
+            HStack(spacing: 4) {
+                Image(systemName: "cpu.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(.purple)
+                
+                Text(dayData.formattedTokens)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(dayData.tokens > 0 ? .primary : .secondary)
+                    .frame(minWidth: 45, alignment: .trailing)
+            }
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isHovered ? Color.gray.opacity(0.08) : Color.clear)
+        )
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+    }
+    
+    private var dayLabelColor: Color {
+        // 根据日期标签显示不同的颜色
+        switch dayData.dayLabel {
+        case "今天":
+            return .blue
+        case "昨天":
+            return .orange
+        case "前天":
+            return .gray
+        default:
+            return .gray
+        }
     }
 }
 

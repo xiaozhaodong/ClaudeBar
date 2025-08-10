@@ -209,11 +209,26 @@ class SimpleJSONLParser {
     }
 }
 
-// 日期过滤
+// 日期过滤 - 支持时区转换
 func filterEntriesByDate(_ entries: [SimpleUsageEntry], targetDate: String) -> [SimpleUsageEntry] {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    
+    let localDateFormatter = DateFormatter()
+    localDateFormatter.dateFormat = "yyyy-MM-dd"
+    localDateFormatter.timeZone = TimeZone.current
+    
     return entries.filter { entry in
-        let datePrefix = String(entry.timestamp.prefix(10))
-        return datePrefix == targetDate
+        // 尝试解析时间戳
+        guard let date = formatter.date(from: entry.timestamp) else {
+            // 如果解析失败，回退到简单的字符串比较
+            let datePrefix = String(entry.timestamp.prefix(10))
+            return datePrefix == targetDate
+        }
+        
+        // 转换到本地时区并格式化为日期字符串
+        let localDateString = localDateFormatter.string(from: date)
+        return localDateString == targetDate
     }
 }
 
