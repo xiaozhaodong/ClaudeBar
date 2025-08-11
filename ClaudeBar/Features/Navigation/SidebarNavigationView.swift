@@ -20,7 +20,13 @@ struct SidebarNavigationView: View {
             // 导航菜单项
             ScrollView {
                 LazyVStack(spacing: 4) {
-                    ForEach(NavigationTab.allCases) { tab in
+                    // 暂时隐藏系统状态、工具箱、帮助菜单项
+                    ForEach(NavigationTab.allCases.filter { tab in
+                        // 注释掉不需要显示的菜单项
+                        tab != .systemStatus && 
+                        tab != .toolbox && 
+                        tab != .help
+                    }) { tab in
                         NavigationTabItem(
                             tab: tab,
                             isSelected: selectedTab == tab,
@@ -104,50 +110,17 @@ struct SidebarBottomSection: View {
                 .fill(Color(.separatorColor))
                 .frame(height: 1)
 
-            VStack(spacing: 8) {
-                // 关闭按钮
-                HStack {
-                    Spacer()
+            // 版本信息
+            HStack {
+                Text("版本 1.0.0")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.secondary)
 
-                    Button(action: {
-                        appState.closeMainWindow()
-                    }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 14))
-                                .foregroundColor(.secondary)
+                Spacer()
 
-                            Text("关闭窗口")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color.gray.opacity(0.1))
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .onHover { hovering in
-                        // 可以添加悬停效果
-                    }
-
-                    Spacer()
-                }
-
-                // 版本信息
-                HStack {
-                    Text("版本 1.0.0")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.secondary)
-
-                    Spacer()
-
-                    Text("菜单栏应用")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.secondary)
-                }
+                Text("菜单栏应用")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.secondary)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
