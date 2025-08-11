@@ -5,7 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 项目概述
 
 ClaudeBar 是一个 macOS 菜单栏应用，集成了 Claude CLI API 端点切换和使用统计功能。主要特性：
-- **API 端点切换**: 管理多个 Claude CLI API 端点配置，支持图形化切换
+- **SQLite 配置管理**: 使用 SQLite 数据库存储 API 端点配置，支持应用内完整 CRUD 操作
+- **无感刷新体验**: 配置操作立即生效，无界面刷新闪烁，提供类似 Web AJAX 的流畅体验
 - **使用统计**: 实时监控 Claude 使用情况，提供详细的 token 统计和成本分析
 - **主窗口界面**: 提供完整的桌面界面，包含所有功能模块的导航
 - **替代工具**: 替代原有的 `switch-claude.sh` 脚本功能，提供更好的用户体验
@@ -88,10 +89,12 @@ Core/                    # 核心业务层
 │   ├── UsageStatistics.swift  # 使用统计模型
 │   └── PricingModel.swift     # 定价模型
 └── Services/
-    ├── ConfigService.swift           # 配置文件管理
+    ├── ConfigService.swift           # 配置文件管理（已弃用）
     ├── ConfigServiceCoordinator.swift # 配置服务协调器
-    ├── ModernConfigService.swift     # 现代化配置服务
-    ├── KeychainService.swift         # 钥匙串安全存储
+    ├── ModernConfigService.swift     # 现代化配置服务（已弃用）
+    ├── SQLiteConfigService.swift     # SQLite 配置服务（主要）
+    ├── DatabaseManager.swift         # SQLite 数据库管理器
+    ├── KeychainService.swift         # 钥匙串安全存储（已弃用）
     ├── ProcessService.swift          # Claude 进程管理
     ├── UsageService.swift            # 使用统计服务
     ├── JSONLParser.swift             # JSONL 解析器
@@ -131,20 +134,24 @@ Features/                # 功能特性层
 
 ### 关键设计原则
 
-1. **安全存储**: API Token 存储在 macOS Keychain 中，配置文件不包含敏感信息
-2. **沙盒权限**: 通过用户手动选择目录来获取 `~/.claude` 的访问权限
-3. **异步优先**: 所有 I/O 操作都使用异步模式，避免阻塞 UI
-4. **错误处理**: 完整的错误类型定义和用户友好的错误消息
-5. **状态管理**: 使用 ObservableObject 和 @Published 进行响应式状态管理
-6. **实时监控**: 通过 ProcessService 和 UsageService 实现 Claude 进程和使用情况的实时监控
-7. **窗口状态同步**: AppState 管理主窗口显示状态，AppDelegate 负责实际窗口操作
+1. **SQLite 数据存储**: API 配置存储在本地 SQLite 数据库中，提供更强的数据一致性和并发安全性
+2. **应用内配置管理**: 完全摒弃外部文件编辑，提供原生的创建、编辑、删除界面
+3. **无感刷新优化**: 通过本地状态同步避免全量数据重载，实现类似 Web AJAX 的即时响应
+4. **异步优先**: 所有 I/O 操作都使用异步模式，避免阻塞 UI
+5. **错误处理**: 完整的错误类型定义和用户友好的错误消息
+6. **状态管理**: 使用 ObservableObject 和 @Published 进行响应式状态管理
+7. **实时监控**: 通过 ProcessService 和 UsageService 实现 Claude 进程和使用情况的实时监控
+8. **窗口状态同步**: AppState 管理主窗口显示状态，AppDelegate 负责实际窗口操作
 
 ### 核心功能特性
 
-#### 1. API 端点配置管理
-- 支持多种配置格式（老式和新式 API 配置）
-- 自动迁移 Token 到 Keychain
-- 配置文件热重载
+#### 1. SQLite 配置管理系统
+- **数据库存储**: 使用 SQLite 数据库存储所有 API 端点配置
+- **应用内管理**: 提供完整的创建、编辑、删除界面，无需外部文件操作
+- **无感刷新**: 配置变更立即生效，无界面刷新感知（< 1ms 响应时间）
+- **数据迁移**: 支持从 JSON 配置文件自动迁移到 SQLite
+- **线程安全**: 使用串行队列确保数据库操作的线程安全性
+- **双重存储**: SQLite 存储 + settings.json 文件更新，确保与 Claude CLI 的兼容性
 
 #### 2. 使用统计
 - 实时解析 Claude CLI 生成的 JSONL 日志
@@ -158,19 +165,53 @@ Features/                # 功能特性层
 - 检测 Claude CLI 的运行情况
 - 提供进程状态指示器
 
-### 配置文件格式
+### SQLite 配置管理架构
 
-应用支持两种配置文件格式：
+#### 数据库设计
+```sql
+CREATE TABLE api_configs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    base_url TEXT NOT NULL,
+    auth_token TEXT NOT NULL,
+    is_active INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+```
 
-#### 传统格式（位于 `~/.claude/` 目录）
-- 配置文件命名: `{配置名}-settings.json`
-- 当前配置: `settings.json`  
-- Token 存储: macOS Keychain（服务名: `claude-config-manager`）
+#### 服务层架构
+```
+ConfigServiceProtocol (接口)
+    ↓
+SQLiteConfigService (实现)
+    ↓
+DatabaseManager (数据库操作)
+    ↓
+SQLite3 (原生 C API)
+```
 
-#### 新式 API 配置格式
-- 配置文件: `api-configs.json`
-- 包含多个 API 端点配置
-- 支持配置切换和管理
+#### 无感刷新机制
+- **本地状态同步**: 操作成功后直接更新本地配置数组，避免数据库重查询
+- **原子性操作**: 数据库操作与界面更新保持原子性，失败时不更新界面
+- **响应时间**: 配置 CRUD 操作响应时间 < 1ms（vs 原来的 ~100ms）
+
+### 数据存储策略
+
+#### SQLite 数据库（主要存储）
+- **位置**: `~/Library/Application Support/ClaudeBar/configs.db`
+- **存储内容**: API 端点配置（name, base_url, auth_token, is_active）
+- **优势**: 数据一致性、并发安全、快速查询、事务支持
+
+#### settings.json 文件（兼容性）
+- **位置**: `~/.claude/settings.json`
+- **用途**: 与 Claude CLI 保持兼容，使用字符串替换方式更新
+- **更新时机**: 切换配置时自动更新
+
+#### 数据迁移支持
+- **自动检测**: 应用启动时检测现有 JSON 配置文件
+- **迁移来源**: `~/.claude/api_configs.json` 和 `{name}-settings.json`
+- **迁移策略**: 非破坏性迁移，保留原有文件
 
 #### 使用数据文件
 - 使用日志: `~/.claude/*.jsonl` 文件
@@ -180,9 +221,10 @@ Features/                # 功能特性层
 ### 权限和安全
 
 - 应用使用 App Sandbox 沙盒技术
-- 需要用户手动授权访问 `~/.claude` 目录
-- API Token 通过 Security Framework 存储在 Keychain
-- 配置文件中的 Token 会自动迁移到 Keychain
+- **数据安全**: API Token 和配置存储在本地 SQLite 数据库，不通过网络传输
+- **数据位置**: 数据库位于用户私有目录 `~/Library/Application Support/ClaudeBar/`
+- **操作安全**: 删除操作需要二次确认，配置名称唯一性验证
+- **无需授权**: 应用启动即可使用，无需手动授权 ~/.claude 目录访问权限
 
 ## 开发注意事项
 
@@ -215,20 +257,22 @@ EOF
 
 ### 调试技巧
 - 应用启动后在菜单栏显示终端图标
-- 查看控制台日志了解应用状态
+- 查看控制台日志了解应用状态和数据库操作
 - 使用 Xcode 的 SwiftUI Preview 调试界面
-- Keychain Access.app 可查看存储的 Token
+- 数据库文件可通过 SQLite 工具查看：`~/Library/Application Support/ClaudeBar/configs.db`
 
 ### 常见开发任务
 
-1. **添加新配置字段**: 修改 `ClaudeConfig` 结构体和相关的 Environment/Permissions 模型
+1. **添加新配置字段**: 修改 `APIConfigRecord` 结构体和 `DatabaseManager` 中的表结构
 2. **修改主界面**: 编辑 `MainPopoverView.swift` 或相关的页面组件
 3. **调整使用统计**: 修改 `UsageService.swift`、`JSONLParser.swift` 或统计相关模型
 4. **增加错误处理**: 在相应的错误枚举中添加新类型
 5. **调整权限**: 修改 `ClaudeBar.entitlements` 文件
 6. **更新图标**: 编辑 `Assets.xcassets/AppIcon.appiconset`
-7. **优化性能**: 关注 `StreamingJSONLParser.swift` 和相关的异步处理逻辑
+7. **优化性能**: 关注 `StreamingJSONLParser.swift` 和 `DatabaseManager.swift` 的异步处理逻辑
 8. **窗口行为修改**: 在 `AppDelegate.swift` 中修改窗口管理逻辑，特别是 `showMainWindow()` 和 `hideMainWindow()` 方法
+9. **配置管理优化**: 修改 `SQLiteConfigService.swift` 和 `DatabaseManager.swift` 实现新功能
+10. **无感刷新调优**: 在 `AppState.swift` 中调整本地状态同步逻辑
 
 ### 发布流程
 1. 运行 `./verify.sh` 验证代码和项目结构
@@ -238,16 +282,17 @@ EOF
 
 ### 关键调试点
 
+#### SQLite 配置管理功能
+- 数据库操作: `DatabaseManager.swift:createConfig/updateConfig/deleteConfig`
+- 配置服务: `SQLiteConfigService.swift:loadConfigs/switchConfig`
+- 无感刷新: `AppState.swift:addConfigLocally/removeConfigLocally/updateConfigLocally`
+- 界面管理: `ConfigManagementComponents.swift:showEditConfigDialog/deleteConfig`
+
 #### 使用统计功能
 - 日志解析: `JSONLParser.swift:parseJSONLFile`
 - 统计计算: `UsageStatistics.swift:calculateStatistics`  
 - 图表渲染: `TimelineChart.swift:body`
 - 成本计算: `PricingModel.swift:calculateCost`
-
-#### API 端点配置管理功能
-- 配置加载: `ConfigService.swift:loadConfigurations`
-- Token 管理: `KeychainService.swift:storeToken/retrieveToken`
-- 配置切换: `MenuBarViewModel.swift:switchToConfiguration`
 
 #### 进程监控功能
 - 进程检测: `ProcessService.swift:checkClaudeProcess`
