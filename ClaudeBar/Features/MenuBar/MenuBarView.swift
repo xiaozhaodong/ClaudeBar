@@ -526,9 +526,11 @@ struct EmptyStateView: View {
             .buttonStyle(.bordered)
             .controlSize(.small)
             
-            Button("授权 ~/.claude 目录") {
-                // 直接调用权限请求
-                appState.requestClaudeDirectoryAccess()
+            Button("刷新配置") {
+                // 刷新配置列表
+                Task {
+                    await appState.forceRefreshConfigs()
+                }
             }
             .buttonStyle(.bordered)
             .controlSize(.small)

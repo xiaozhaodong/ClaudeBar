@@ -591,10 +591,112 @@ struct ConfigManagementRowView: View {
     }
     
     private func editConfig() {
-        // 打开 API 配置文件进行编辑
-        let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
-        let apiConfigFile = homeDirectory.appendingPathComponent(".claude/api_configs.json")
-        NSWorkspace.shared.open(apiConfigFile)
+        // 显示编辑配置对话框
+        showEditConfigDialog()
+    }
+    
+    private func showEditConfigDialog() {
+        let alert = NSAlert()
+        alert.messageText = "编辑 API 端点配置"
+        alert.informativeText = "修改「\(config.name)」的配置信息"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: "取消")
+        
+        // 创建编辑表单容器
+        let containerView = NSView(frame: NSRect(x: 0, y: 0, width: 350, height: 180))
+        
+        // 配置名称标签和输入框
+        let nameLabel = NSTextField(labelWithString: "端点名称:")
+        nameLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        nameLabel.frame = NSRect(x: 0, y: 150, width: 100, height: 17)
+        nameLabel.isEditable = false
+        nameLabel.isBordered = false
+        nameLabel.backgroundColor = NSColor.clear
+        
+        let nameField = NSTextField(frame: NSRect(x: 0, y: 125, width: 350, height: 22))
+        nameField.stringValue = config.name
+        nameField.placeholderString = "例如：work, personal, claude-3-5"
+        
+        // Base URL 标签和输入框
+        let urlLabel = NSTextField(labelWithString: "API Base URL:")
+        urlLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        urlLabel.frame = NSRect(x: 0, y: 95, width: 100, height: 17)
+        urlLabel.isEditable = false
+        urlLabel.isBordered = false
+        urlLabel.backgroundColor = NSColor.clear
+        
+        let baseUrlField = NSTextField(frame: NSRect(x: 0, y: 70, width: 350, height: 22))
+        baseUrlField.stringValue = config.env.anthropicBaseURL ?? "https://api.anthropic.com"
+        baseUrlField.placeholderString = "https://api.anthropic.com"
+        
+        // Auth Token 标签和输入框
+        let tokenLabel = NSTextField(labelWithString: "Auth Token:")
+        tokenLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        tokenLabel.frame = NSRect(x: 0, y: 40, width: 100, height: 17)
+        tokenLabel.isEditable = false
+        tokenLabel.isBordered = false
+        tokenLabel.backgroundColor = NSColor.clear
+        
+        let tokenField = NSSecureTextField(frame: NSRect(x: 0, y: 15, width: 350, height: 22))
+        tokenField.stringValue = config.env.anthropicAuthToken ?? ""
+        tokenField.placeholderString = "sk-ant-api03-xxxxxxxxxxxxxxx"
+        
+        // 添加到容器视图
+        containerView.addSubview(nameLabel)
+        containerView.addSubview(nameField)
+        containerView.addSubview(urlLabel)
+        containerView.addSubview(baseUrlField)
+        containerView.addSubview(tokenLabel)
+        containerView.addSubview(tokenField)
+        
+        alert.accessoryView = containerView
+        
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            let configName = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            let baseUrl = baseUrlField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            let token = tokenField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            // 验证输入
+            guard !configName.isEmpty else {
+                appState.showErrorMessage("端点名称不能为空")
+                return
+            }
+            
+            guard !token.isEmpty else {
+                appState.showErrorMessage("Auth Token 不能为空")
+                return
+            }
+            
+            // 创建更新后的配置
+            let env = ClaudeConfig.Environment(
+                anthropicAuthToken: token,
+                anthropicBaseURL: baseUrl.isEmpty ? "https://api.anthropic.com" : baseUrl,
+                claudeCodeMaxOutputTokens: "32000",
+                claudeCodeDisableNonessentialTraffic: "1"
+            )
+            
+            let updatedConfig = ClaudeConfig(
+                name: configName,
+                env: env,
+                permissions: ClaudeConfig.Permissions(allow: [], deny: []),
+                cleanupPeriodDays: 365,
+                includeCoAuthoredBy: false
+            )
+            
+            Task {
+                do {
+                    // 使用更新方法而不是删除再创建
+                    let sqliteService = appState.configService as! SQLiteConfigService
+                    try await sqliteService.updateConfig(config, updatedConfig)
+                    appState.showSuccessMessage("成功更新 API 端点「\(configName)」")
+                    await appState.forceRefreshConfigs()
+                } catch {
+                    appState.showErrorMessage("更新端点失败：\(error.localizedDescription)")
+                }
+            }
+        }
     }
     
     private func deleteConfig() {
@@ -645,7 +747,7 @@ struct ConfigListEmptyView: View {
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(.primary)
                 
-                Text("请在 ~/.claude 目录中创建 API 端点配置")
+                Text("请通过应用程序创建 API 端点配置")
                     .font(.system(size: 14))
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)

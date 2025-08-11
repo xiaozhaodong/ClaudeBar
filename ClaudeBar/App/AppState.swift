@@ -33,7 +33,7 @@ class AppState: ObservableObject {
     private let configCacheValidityDuration: TimeInterval = 5 * 60 // 5分钟缓存有效期
     
     init(configService: ConfigServiceProtocol? = nil) {
-        self.configService = configService ?? ModernConfigService()
+        self.configService = configService ?? SQLiteConfigService()
         self.processService = ProcessService()
         self.usageService = UsageService(configService: self.configService)
         
