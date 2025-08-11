@@ -385,7 +385,8 @@ struct ConfigurationsList: View {
                 do {
                     try await appState.configService.createConfig(newConfig)
                     appState.showSuccessMessage("成功创建 API 端点「\(configName)」")
-                    await appState.forceRefreshConfigs()
+                    // 使用本地状态更新替代全量刷新
+                    appState.addConfigLocally(newConfig)
                 } catch {
                     appState.showErrorMessage("创建端点失败：\(error.localizedDescription)")
                 }
@@ -691,7 +692,8 @@ struct ConfigManagementRowView: View {
                     let sqliteService = appState.configService as! SQLiteConfigService
                     try await sqliteService.updateConfig(config, updatedConfig)
                     appState.showSuccessMessage("成功更新 API 端点「\(configName)」")
-                    await appState.forceRefreshConfigs()
+                    // 使用本地状态更新替代全量刷新
+                    appState.updateConfigLocally(oldConfig: config, newConfig: updatedConfig)
                 } catch {
                     appState.showErrorMessage("更新端点失败：\(error.localizedDescription)")
                 }
@@ -714,7 +716,8 @@ struct ConfigManagementRowView: View {
                 do {
                     try await appState.configService.deleteConfig(config)
                     appState.showSuccessMessage("已删除 API 端点「\(config.name)」")
-                    await appState.forceRefreshConfigs()
+                    // 使用本地状态更新替代全量刷新
+                    appState.removeConfigLocally(config)
                 } catch {
                     appState.showErrorMessage("删除端点失败：\(error.localizedDescription)")
                 }

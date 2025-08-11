@@ -271,6 +271,63 @@ class AppState: ObservableObject {
         showingMainWindow.toggle()
     }
     
+    // MARK: - 本地状态操作方法（无感刷新）
+    
+    /// 本地添加配置（无需重新加载数据库）
+    @MainActor
+    func addConfigLocally(_ config: ClaudeConfig) {
+        // 检查配置是否已存在
+        guard !availableConfigs.contains(where: { $0.name == config.name }) else {
+            print("配置 \(config.name) 已存在，跳过添加")
+            return
+        }
+        
+        // 添加到本地配置数组
+        availableConfigs.append(config)
+        
+        // 重新排序保持一致性
+        availableConfigs.sort { $0.name < $1.name }
+        
+        print("本地添加配置成功: \(config.name)")
+    }
+    
+    /// 本地删除配置（无需重新加载数据库）
+    @MainActor
+    func removeConfigLocally(_ config: ClaudeConfig) {
+        // 从本地配置数组中移除
+        availableConfigs.removeAll { $0.name == config.name }
+        
+        // 如果删除的是当前配置，清除当前配置状态
+        if currentConfig?.name == config.name {
+            currentConfig = nil
+        }
+        
+        print("本地删除配置成功: \(config.name)")
+    }
+    
+    /// 本地更新配置（无需重新加载数据库）
+    @MainActor
+    func updateConfigLocally(oldConfig: ClaudeConfig, newConfig: ClaudeConfig) {
+        // 查找并更新配置
+        if let index = availableConfigs.firstIndex(where: { $0.name == oldConfig.name }) {
+            availableConfigs[index] = newConfig
+            
+            // 如果更新的是当前配置，同步更新当前配置状态
+            if currentConfig?.name == oldConfig.name {
+                currentConfig = newConfig
+            }
+            
+            // 如果名称发生变化，重新排序
+            if oldConfig.name != newConfig.name {
+                availableConfigs.sort { $0.name < $1.name }
+            }
+            
+            print("本地更新配置成功: \(oldConfig.name) -> \(newConfig.name)")
+        } else {
+            print("警告：未找到要更新的配置 \(oldConfig.name)")
+        }
+    }
+    
     deinit {
         loadConfigsTask?.cancel()
         successMessageTask?.cancel()
