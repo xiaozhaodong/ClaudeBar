@@ -439,19 +439,6 @@ class UsageService: UsageServiceProtocol, ObservableObject {
         Logger.shared.info("- 总成本: $\(String(format: "%.6f", totalCost))")
         Logger.shared.info("- 总令牌: \(formatNumber(totalTokens))")
         
-        // 与ccusage基准对比
-        let ccusageTarget = 1208150693
-        let difference = totalTokens - ccusageTarget
-        let percentDiff = abs(Double(difference) / Double(ccusageTarget)) * 100
-        
-        if percentDiff < 1.0 {
-            Logger.shared.info("✅ 与ccusage差异小于1%，达到目标精度！")
-        } else if percentDiff < 5.0 {
-            Logger.shared.info("🟡 与ccusage差异 \(String(format: "%.2f", percentDiff))%，较好的精度")
-        } else {
-            Logger.shared.warning("🔴 与ccusage差异 \(String(format: "%.2f", percentDiff))%，需要优化")
-        }
-        
         return UsageStatistics(
             totalCost: totalCost,
             totalTokens: totalTokens,

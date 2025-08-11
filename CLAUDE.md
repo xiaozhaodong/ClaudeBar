@@ -259,3 +259,5 @@ EOF
 - 关闭事件拦截: `AppDelegate.swift:windowShouldClose`
 - 应用策略切换: `NSApp.setActivationPolicy(.regular/.accessory)`
 
+
+- to memorize
