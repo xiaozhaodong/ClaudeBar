@@ -35,6 +35,10 @@ struct MenuBarView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .onAppear {
             viewModel.setAppState(appState)
+            // 使用智能加载，避免不必要的刷新
+            Task {
+                await appState.loadConfigsIfNeeded()
+            }
         }
     }
 }
@@ -418,6 +422,7 @@ struct ModernConfigListSection: View {
         
         refreshTask?.cancel()
         refreshTask = Task {
+            // 使用智能刷新：只在用户主动点击时才强制刷新
             await appState.forceRefreshConfigs()
         }
     }

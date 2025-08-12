@@ -30,7 +30,7 @@ class AppState: ObservableObject {
     
     // 配置缓存机制
     private var lastConfigLoadTime: Date?
-    private let configCacheValidityDuration: TimeInterval = 5 * 60 // 5分钟缓存有效期
+    private let configCacheValidityDuration: TimeInterval = 60 // 增加到60秒缓存有效期
     
     init(configService: ConfigServiceProtocol? = nil) {
         self.configService = configService ?? SQLiteConfigService()
@@ -122,10 +122,12 @@ class AppState: ObservableObject {
            now.timeIntervalSince(lastLoadTime) < configCacheValidityDuration,
            !availableConfigs.isEmpty {
             // 缓存仍然有效且有配置数据，无需重新加载
+            print("配置缓存有效，跳过重新加载 (上次加载时间: \(lastLoadTime))")
             return
         }
         
         // 缓存过期或从未加载，执行加载
+        print("配置缓存过期或未初始化，执行加载")
         await loadConfigs()
     }
     
