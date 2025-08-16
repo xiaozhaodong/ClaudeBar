@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0B12CB1A2E4B1B3D00961EF0 /* UsageStatisticsDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B12CB192E4B1B3D00961EF0 /* UsageStatisticsDatabase.swift */; };
+		0B12CB1C2E4C389F00961EF0 /* HybridUsageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B12CB1B2E4C389F00961EF0 /* HybridUsageService.swift */; };
 		0B3B8F2F2E3CBB0A00C77B88 /* TimelineChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B3B8F2D2E3CBB0A00C77B88 /* TimelineChart.swift */; };
 		0B3B8F302E3CBB0A00C77B88 /* UsageTabViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B3B8F2E2E3CBB0A00C77B88 /* UsageTabViews.swift */; };
 		0B3B8F312E3CBB0A00C77B88 /* SkeletonLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B3B8F2C2E3CBB0A00C77B88 /* SkeletonLoader.swift */; };
@@ -57,6 +59,8 @@
 
 /* Begin PBXFileReference section */
 		08D73174DF074A29BF2489D6 /* ActionComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActionComponents.swift; sourceTree = "<group>"; };
+		0B12CB192E4B1B3D00961EF0 /* UsageStatisticsDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageStatisticsDatabase.swift; sourceTree = "<group>"; };
+		0B12CB1B2E4C389F00961EF0 /* HybridUsageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HybridUsageService.swift; sourceTree = "<group>"; };
 		0B3B8F2C2E3CBB0A00C77B88 /* SkeletonLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkeletonLoader.swift; sourceTree = "<group>"; };
 		0B3B8F2D2E3CBB0A00C77B88 /* TimelineChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineChart.swift; sourceTree = "<group>"; };
 		0B3B8F2E2E3CBB0A00C77B88 /* UsageTabViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageTabViews.swift; sourceTree = "<group>"; };
@@ -249,6 +253,8 @@
 		A1234567890ABCDEF123458C /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				0B12CB1B2E4C389F00961EF0 /* HybridUsageService.swift */,
+				0B12CB192E4B1B3D00961EF0 /* UsageStatisticsDatabase.swift */,
 				0B6C1CDB2E49D8FC00C074AC /* DatabaseManager.swift */,
 				0B6C1CDC2E49D8FC00C074AC /* SQLiteConfigService.swift */,
 				0B79A6112E43335300B7640C /* ConfigServiceCoordinator.swift */,
@@ -375,9 +381,11 @@
 				A1234567890ABCDEF1234567 /* ClaudeBarApp.swift in Sources */,
 				0B3CE2A62E3B73B400BAEDF9 /* SupportingViews.swift in Sources */,
 				A1234567890ABCDEF123456E /* AppDelegate.swift in Sources */,
+				0B12CB1A2E4B1B3D00961EF0 /* UsageStatisticsDatabase.swift in Sources */,
 				A1234567890ABCDEF1234578 /* MenuBarViewModel.swift in Sources */,
 				0B3CE2A22E3B701100BAEDF9 /* MainPopoverView.swift in Sources */,
 				A1234567890ABCDEF123457C /* KeychainService.swift in Sources */,
+				0B12CB1C2E4C389F00961EF0 /* HybridUsageService.swift in Sources */,
 				A1234567890ABCDEF123457E /* ProcessService.swift in Sources */,
 				A1234567890ABCDEF1234580 /* Logger.swift in Sources */,
 				0B3CE2A02E3B648F00BAEDF9 /* SettingsView.swift in Sources */,

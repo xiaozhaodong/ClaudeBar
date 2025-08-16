@@ -71,26 +71,6 @@ struct UsageStatisticsView: View {
                 .buttonStyle(PlainButtonStyle())
                 .disabled(viewModel.isLoading)
             }
-            
-            // 缓存状态指示器
-            HStack {
-                CacheStatusIndicator(
-                    status: viewModel.cacheStatus,
-                    metadata: viewModel.cacheMetadata,
-                    onRefresh: {
-                        await viewModel.refreshStatistics()
-                    }
-                )
-                
-                Spacer()
-            }
-            
-            // 缓存过期提醒（仅在即将过期时显示）
-            if let metadata = viewModel.cacheMetadata, metadata.isNearExpiry {
-                CacheExpiryReminder(metadata: metadata) {
-                    await viewModel.refreshStatistics()
-                }
-            }
         }
         .padding(.horizontal, DesignTokens.Spacing.Page.padding)
     }

@@ -13,6 +13,12 @@ protocol UsageServiceProtocol {
         projectPath: String?
     ) async throws -> UsageStatistics
     
+    /// 静默获取使用统计数据（不显示加载状态）
+    func getUsageStatisticsSilently(
+        dateRange: DateRange,
+        projectPath: String?
+    ) async throws -> UsageStatistics
+    
     /// 获取会话统计数据
     /// - Parameters:
     ///   - dateRange: 日期范围

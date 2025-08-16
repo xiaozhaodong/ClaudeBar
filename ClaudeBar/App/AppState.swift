@@ -22,7 +22,8 @@ class AppState: ObservableObject {
     
     internal var configService: ConfigServiceProtocol
     private let processService: ProcessService
-    private let usageService: UsageService
+    private let usageService: UsageServiceProtocol
+    private let usageStatisticsDB: UsageStatisticsDatabase  // 使用统计数据库
     private var cancellables = Set<AnyCancellable>()
     private var loadConfigsTask: Task<Void, Never>?
     private var successMessageTask: Task<Void, Never>?
@@ -35,7 +36,13 @@ class AppState: ObservableObject {
     init(configService: ConfigServiceProtocol? = nil) {
         self.configService = configService ?? SQLiteConfigService()
         self.processService = ProcessService()
-        self.usageService = UsageService(configService: self.configService)
+        
+        // 初始化使用统计数据库（这会自动创建表结构）
+        self.usageStatisticsDB = UsageStatisticsDatabase()
+        print("使用统计数据库已初始化")
+        
+        // 使用混合服务：优先数据库，降级到JSONL
+        self.usageService = HybridUsageService(database: self.usageStatisticsDB, configService: self.configService)
         
         // 监听进程状态变化
         processService.$processStatus
@@ -339,19 +346,20 @@ class AppState: ObservableObject {
     
     // MARK: - 使用统计相关方法
     
-    /// 后台加载使用统计数据（不显示加载状态）
+    /// 后台加载使用统计数据（简化）
     private func loadUsageStatisticsInBackground() async {
         do {
-            let stats = try await usageService.getUsageStatisticsSilently()
+            let stats = try await usageService.getUsageStatistics(dateRange: .all, projectPath: nil)
             usageStatistics = stats
             usageErrorMessage = nil
+            Logger.shared.info("AppState: 后台加载使用统计成功")
         } catch {
             usageErrorMessage = "加载使用统计失败: \(error.localizedDescription)"
-            print("后台加载使用统计失败: \(error)")
+            Logger.shared.error("AppState: 后台加载使用统计失败: \(error)")
         }
     }
     
-    /// 刷新使用统计数据
+    /// 刷新使用统计数据（直接调用数据库）
     func refreshUsageStatistics() async {
         guard !isLoadingUsage else { return }
         
@@ -361,17 +369,20 @@ class AppState: ObservableObject {
             usageErrorMessage = nil
             
             do {
-                let stats = try await usageService.getUsageStatistics()
+                // 直接调用数据库服务
+                let stats = try await usageService.getUsageStatistics(dateRange: .all, projectPath: nil)
                 
                 guard !Task.isCancelled else { return }
                 
                 usageStatistics = stats
                 usageErrorMessage = nil
+                Logger.shared.info("AppState: 使用统计刷新成功")
+                
             } catch {
                 guard !Task.isCancelled else { return }
                 
                 usageErrorMessage = "刷新使用统计失败: \(error.localizedDescription)"
-                print("使用统计刷新错误: \(error)")
+                Logger.shared.error("AppState: 使用统计刷新错误: \(error)")
             }
             
             isLoadingUsage = false

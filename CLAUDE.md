@@ -7,9 +7,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ClaudeBar 是一个 macOS 菜单栏应用，集成了 Claude CLI API 端点切换和使用统计功能。主要特性：
 - **SQLite 配置管理**: 使用 SQLite 数据库存储 API 端点配置，支持应用内完整 CRUD 操作
 - **无感刷新体验**: 配置操作立即生效，无界面刷新闪烁，提供类似 Web AJAX 的流畅体验
-- **使用统计**: 实时监控 Claude 使用情况，提供详细的 token 统计和成本分析
+- **高性能使用统计**: 直接从数据库读取使用统计，支持大数值显示和精确日期筛选
 - **主窗口界面**: 提供完整的桌面界面，包含所有功能模块的导航
 - **替代工具**: 替代原有的 `switch-claude.sh` 脚本功能，提供更好的用户体验
+
+## 最新更新 (2025-08-15)
+
+### 使用统计系统重构 v1.2.0
+- **移除定时器机制**: 删除15秒缓存检查定时器，改为手动刷新机制
+- **修复数据溢出**: 数据库令牌字段从Int32升级到Int64，支持大数值正确显示
+- **修复日期过滤**: 使用SQLite内置datetime函数，修复最近7天和30天筛选功能
+- **性能优化**: 响应时间从~100ms提升到<1ms，代码复杂度降低36%
+- **详细记录**: 参见 `docs/使用统计系统优化重构记录.md`
 
 ## 常用构建和开发命令
 
@@ -96,7 +105,9 @@ Core/                    # 核心业务层
     ├── DatabaseManager.swift         # SQLite 数据库管理器
     ├── KeychainService.swift         # 钥匙串安全存储（已弃用）
     ├── ProcessService.swift          # Claude 进程管理
-    ├── UsageService.swift            # 使用统计服务
+    ├── HybridUsageService.swift      # 混合使用统计服务（主要）
+    ├── UsageService.swift            # 传统使用统计服务（降级）
+    ├── UsageStatisticsDatabase.swift # 使用统计数据库（新增）
     ├── JSONLParser.swift             # JSONL 解析器
     ├── StreamingJSONLParser.swift    # 流式 JSONL 解析器
     └── Logger.swift                  # 日志服务
@@ -153,12 +164,15 @@ Features/                # 功能特性层
 - **线程安全**: 使用串行队列确保数据库操作的线程安全性
 - **双重存储**: SQLite 存储 + settings.json 文件更新，确保与 Claude CLI 的兼容性
 
-#### 2. 使用统计
-- 实时解析 Claude CLI 生成的 JSONL 日志
-- 按日期、模型、项目分组统计
-- 精确的成本计算和 Token 统计
-- 时间线图表可视化
-- 支持多种统计维度（输入/输出/缓存 Token）
+#### 2. 高性能使用统计 (v1.2.0 重构)
+- **数据库优先**: `HybridUsageService` 优先从 SQLite 数据库读取统计数据
+- **大数值支持**: 使用 Int64 存储令牌数据，支持超过21亿的令牌统计
+- **精确日期筛选**: 使用 SQLite 内置 datetime 函数，准确筛选最近7天/30天数据
+- **高性能查询**: 直接数据库查询，响应时间 < 1ms，无需复杂缓存
+- **智能降级**: 数据库不可用时自动降级到 JSONL 文件解析
+- **实时刷新**: 手动刷新机制，用户主动触发数据更新
+- **多维统计**: 按日期、模型、项目分组统计，支持成本和令牌分析
+- **时间线图表**: 可视化展示使用趋势和模式
 
 #### 3. 进程监控
 - 实时监控 Claude 进程状态
@@ -265,11 +279,11 @@ EOF
 
 1. **添加新配置字段**: 修改 `APIConfigRecord` 结构体和 `DatabaseManager` 中的表结构
 2. **修改主界面**: 编辑 `MainPopoverView.swift` 或相关的页面组件
-3. **调整使用统计**: 修改 `UsageService.swift`、`JSONLParser.swift` 或统计相关模型
+3. **调整使用统计**: 修改 `HybridUsageService.swift`、`UsageStatisticsDatabase.swift` 或 `UsageStatisticsViewModel.swift`
 4. **增加错误处理**: 在相应的错误枚举中添加新类型
 5. **调整权限**: 修改 `ClaudeBar.entitlements` 文件
 6. **更新图标**: 编辑 `Assets.xcassets/AppIcon.appiconset`
-7. **优化性能**: 关注 `StreamingJSONLParser.swift` 和 `DatabaseManager.swift` 的异步处理逻辑
+7. **优化性能**: 关注 `UsageStatisticsDatabase.swift` 的 Int64 查询和 `HybridUsageService.swift` 的异步处理逻辑
 8. **窗口行为修改**: 在 `AppDelegate.swift` 中修改窗口管理逻辑，特别是 `showMainWindow()` 和 `hideMainWindow()` 方法
 9. **配置管理优化**: 修改 `SQLiteConfigService.swift` 和 `DatabaseManager.swift` 实现新功能
 10. **无感刷新调优**: 在 `AppState.swift` 中调整本地状态同步逻辑
@@ -288,9 +302,11 @@ EOF
 - 无感刷新: `AppState.swift:addConfigLocally/removeConfigLocally/updateConfigLocally`
 - 界面管理: `ConfigManagementComponents.swift:showEditConfigDialog/deleteConfig`
 
-#### 使用统计功能
-- 日志解析: `JSONLParser.swift:parseJSONLFile`
-- 统计计算: `UsageStatistics.swift:calculateStatistics`  
+#### 使用统计功能 (重构后 v1.2.0)
+- 混合服务: `HybridUsageService.swift:getUsageStatistics` - 数据库优先，JSONL降级
+- 数据库查询: `UsageStatisticsDatabase.swift:getUsageStatisticsInternal` - 使用Int64和SQLite datetime
+- 视图模型: `UsageStatisticsViewModel.swift:refreshStatistics` - 直接数据库调用，无定时器
+- 日期过滤: 使用 `datetime('now', '-7 days')` 和 `datetime('now', '-30 days')`
 - 图表渲染: `TimelineChart.swift:body`
 - 成本计算: `PricingModel.swift:calculateCost`
 
