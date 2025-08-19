@@ -149,11 +149,10 @@ struct SettingsPageView: View {
                         .foregroundColor(.primary)
                         .padding(.horizontal, 24)
                     
-                    ModernConfigDirectorySection(
-                        currentPath: $currentConfigPath,
-                        isChangingDirectory: $isChangingDirectory
-                    )
-                    .padding(.horizontal, 24)
+                    // TODO: 实现现代配置目录部分
+                    Text("配置目录设置 - 待实现")
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 24)
                 }
                 
                 // 应用设置
@@ -163,7 +162,20 @@ struct SettingsPageView: View {
                         .foregroundColor(.primary)
                         .padding(.horizontal, 24)
                     
-                    ModernAppSettingsSection()
+                    // TODO: 实现现代应用设置部分
+                    Text("应用设置 - 待实现")
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 24)
+                }
+                
+                // 自动同步设置
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("自动同步")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(.primary)
+                        .padding(.horizontal, 24)
+                    
+                    AutoSyncSettingsCard()
                         .padding(.horizontal, 24)
                 }
                 
@@ -185,7 +197,9 @@ struct SettingsPageView: View {
                         .foregroundColor(.primary)
                         .padding(.horizontal, 24)
                     
-                    ThemeSettingsSection()
+                    // TODO: 实现主题设置部分
+                    Text("主题设置 - 待实现")
+                        .foregroundColor(.secondary)
                         .padding(.horizontal, 24)
                 }
                 
@@ -196,7 +210,9 @@ struct SettingsPageView: View {
                         .foregroundColor(.primary)
                         .padding(.horizontal, 24)
                     
-                    DeveloperSettingsSection()
+                    // TODO: 实现开发者设置部分
+                    Text("开发者选项 - 待实现")
+                        .foregroundColor(.secondary)
                         .padding(.horizontal, 24)
                 }
                 
@@ -207,7 +223,9 @@ struct SettingsPageView: View {
                         .foregroundColor(.primary)
                         .padding(.horizontal, 24)
                     
-                    ModernAboutSection()
+                    // TODO: 实现现代关于部分
+                    Text("关于信息 - 待实现")
+                        .foregroundColor(.secondary)
                         .padding(.horizontal, 24)
                 }
             }
@@ -1530,6 +1548,220 @@ struct HelpLinkItem: View {
         if let url = URL(string: url) {
             NSWorkspace.shared.open(url)
         }
+    }
+}
+
+// MARK: - Auto Sync Settings Card
+
+struct AutoSyncSettingsCard: View {
+    @EnvironmentObject private var userPreferences: UserPreferences
+    @EnvironmentObject private var appState: AppState
+    @State private var isPerformingManualSync = false
+    @State private var localAutoSyncEnabled: Bool = false
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // 自动同步开关
+            HStack(spacing: 12) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundColor(.blue)
+                    .frame(width: 24)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("启用自动同步")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.primary)
+                    
+                    Text("定期自动同步使用统计数据")
+                        .font(.system(size: 14))
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+                
+                Toggle("", isOn: Binding(
+                    get: { localAutoSyncEnabled },
+                    set: { newValue in
+                        localAutoSyncEnabled = newValue
+                        // 延迟更新 UserPreferences 以避免阻塞
+                        DispatchQueue.main.async {
+                            userPreferences.autoSyncEnabled = newValue
+                        }
+                    }
+                ))
+                .controlSize(.small)
+            }
+            
+            // 同步间隔选择器（仅在自动同步启用时显示）
+            if localAutoSyncEnabled {
+                HStack(spacing: 12) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundColor(.green)
+                        .frame(width: 24)
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("同步间隔")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.primary)
+                        
+                        Text("自动同步的时间间隔")
+                            .font(.system(size: 14))
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    Picker("", selection: Binding(
+                        get: { userPreferences.currentSyncInterval },
+                        set: { interval in
+                            DispatchQueue.main.async {
+                                userPreferences.setSyncInterval(interval)
+                            }
+                        }
+                    )) {
+                        ForEach(SyncInterval.allCases, id: \.self) { interval in
+                            Text(interval.displayName).tag(interval)
+                        }
+                    }
+                    .pickerStyle(MenuPickerStyle())
+                    .frame(width: 120)
+                }
+                .animation(.easeInOut(duration: 0.3), value: localAutoSyncEnabled)
+            }
+            
+            // 同步通知开关
+            HStack(spacing: 12) {
+                Image(systemName: "bell.badge")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundColor(.orange)
+                    .frame(width: 24)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("同步通知")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.primary)
+                    
+                    Text("同步完成时显示通知")
+                        .font(.system(size: 14))
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+                
+                Toggle("", isOn: $userPreferences.showSyncNotifications)
+                    .controlSize(.small)
+            }
+            
+            // 最后同步时间显示
+            if let lastSyncDate = userPreferences.lastFullSyncDate {
+                HStack(spacing: 12) {
+                    Image(systemName: "clock.fill")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundColor(.gray)
+                        .frame(width: 24)
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("最后同步时间")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.primary)
+                        
+                        Text(formatSyncTime(lastSyncDate))
+                            .font(.system(size: 14))
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Spacer()
+                }
+            }
+            
+            Divider()
+                .padding(.vertical, 4)
+            
+            // 手动同步按钮
+            HStack(spacing: 16) {
+                Button(action: {
+                    performManualSync()
+                }) {
+                    HStack(spacing: 8) {
+                        if isPerformingManualSync {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                                .frame(width: 16, height: 16)
+                        } else {
+                            Image(systemName: "icloud.and.arrow.up")
+                                .font(.system(size: 16, weight: .medium))
+                        }
+                        
+                        Text(isPerformingManualSync ? "同步中..." : "手动同步")
+                            .font(.system(size: 15, weight: .medium))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(isPerformingManualSync ? Color.gray : Color.blue)
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(isPerformingManualSync || !localAutoSyncEnabled)
+                
+                // 简化同步状态显示，避免可能的问题
+                if localAutoSyncEnabled {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.green)
+                        
+                        Text("自动同步已启用")
+                            .font(.system(size: 14))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                Spacer()
+            }
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.controlBackgroundColor))
+                .shadow(color: .black.opacity(0.05), radius: 1, x: 0, y: 1)
+        )
+        .onAppear {
+            // 初始化本地状态
+            localAutoSyncEnabled = userPreferences.autoSyncEnabled
+        }
+        .onChange(of: userPreferences.autoSyncEnabled) { newValue in
+            // 同步外部变更到本地状态
+            localAutoSyncEnabled = newValue
+        }
+    }
+    
+    private func performManualSync() {
+        guard userPreferences.autoSyncEnabled && !isPerformingManualSync else { return }
+        
+        isPerformingManualSync = true
+        
+        Task {
+            do {
+                _ = try await appState.autoSyncService.performIncrementalSync()
+            } catch {
+                print("手动同步失败: \(error)")
+            }
+            
+            await MainActor.run {
+                isPerformingManualSync = false
+            }
+        }
+    }
+    
+    private func formatSyncTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM-dd HH:mm"
+        return formatter.string(from: date)
     }
 }
 

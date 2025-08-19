@@ -390,7 +390,8 @@ class UsageDataMigrationService {
                 projectPath: data.projectPath,
                 requestId: "test-request-\(index + 1)",
                 messageId: "test-message-\(index + 1)",
-                messageType: "assistant"
+                messageType: "assistant",
+                sourceFile: "migration_test_data"
             )
         }
     }

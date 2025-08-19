@@ -3,6 +3,13 @@
 import Foundation
 import SQLite3
 
+// MARK: - String扩展支持正则表达式
+extension String {
+    func matches(_ regex: String) -> Bool {
+        return range(of: regex, options: .regularExpression) != nil
+    }
+}
+
 // MARK: - 真实的数据模型（与项目保持一致）
 
 struct TestUsageEntry {
@@ -20,6 +27,7 @@ struct TestUsageEntry {
     let messageId: String?
     let messageType: String
     let dateString: String
+    let sourceFile: String
     
     var totalTokens: Int {
         return inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens
@@ -96,7 +104,7 @@ struct RawJSONLEntry: Codable {
     }
     
     /// 转换为标准的使用记录（完全与项目一致）
-    func toUsageEntry(projectPath: String) -> TestUsageEntry? {
+    func toUsageEntry(projectPath: String, sourceFile: String) -> TestUsageEntry? {
         // 完全复制项目中 RawJSONLEntry.toUsageEntry 的逻辑
         let messageType = type ?? self.messageType ?? ""
         let usageData = usage ?? message?.usage
@@ -168,7 +176,8 @@ struct RawJSONLEntry: Codable {
             requestId: extractedRequestId,
             messageId: extractedMessageId,
             messageType: messageType,
-            dateString: dateString
+            dateString: dateString,
+            sourceFile: sourceFile
         )
     }
     
@@ -178,21 +187,68 @@ struct RawJSONLEntry: Codable {
         return formatter.string(from: Date())
     }
     
-    /// ccusage 风格的日期格式化方法（与项目完全一致）
+    /// 精确的日期格式化方法，支持多种时间戳格式
     private func formatDateLikeCcusage(from timestamp: String) -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        // 首先尝试 ISO8601 格式解析
+        let iso8601Formatter = ISO8601DateFormatter()
+        iso8601Formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         
-        guard let date = formatter.date(from: timestamp) else {
-            // 如果解析失败，回退到简单的字符串截取
-            return String(timestamp.prefix(10))
+        if let date = iso8601Formatter.date(from: timestamp) {
+            return formatDateToString(date)
         }
         
+        // 尝试其他常见格式
+        let formatters = [
+            // ISO8601 无毫秒
+            { () -> DateFormatter in
+                let f = DateFormatter()
+                f.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZ"
+                f.locale = Locale(identifier: "en_US_POSIX")
+                return f
+            }(),
+            // RFC3339 格式
+            { () -> DateFormatter in
+                let f = DateFormatter()
+                f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSZ"
+                f.locale = Locale(identifier: "en_US_POSIX")
+                return f
+            }(),
+            // 简单的日期时间格式
+            { () -> DateFormatter in
+                let f = DateFormatter()
+                f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+                f.locale = Locale(identifier: "en_US_POSIX")
+                f.timeZone = TimeZone.current
+                return f
+            }()
+        ]
+        
+        for formatter in formatters {
+            if let date = formatter.date(from: timestamp) {
+                return formatDateToString(date)
+            }
+        }
+        
+        // 如果所有格式都失败，尝试使用 SQLite datetime 函数的安全方式
+        // 检查时间戳是否至少包含日期格式
+        if timestamp.count >= 10 && timestamp.contains("-") {
+            let dateComponent = String(timestamp.prefix(10))
+            // 验证日期格式 YYYY-MM-DD
+            if dateComponent.matches("^\\d{4}-\\d{2}-\\d{2}$") {
+                return dateComponent
+            }
+        }
+        
+        // 最后的回退：返回当前日期（避免错误数据）
+        return formatDateToString(Date())
+    }
+    
+    /// 将Date对象格式化为 YYYY-MM-DD 字符串
+    private func formatDateToString(_ date: Date) -> String {
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyy-MM-dd"
-        dateFormatter.locale = Locale(identifier: "en-CA")  // 与项目一致
-        dateFormatter.timeZone = TimeZone.current  // 使用本地时区
-        
+        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dateFormatter.timeZone = TimeZone.current
         return dateFormatter.string(from: date)
     }
     
@@ -462,9 +518,11 @@ class TestUsageDatabase {
             message_id TEXT,
             message_type TEXT,
             date_string TEXT,
+            source_file TEXT,
             total_tokens BIGINT GENERATED ALWAYS AS
                 (input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens) STORED,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            updated_at TEXT DEFAULT (datetime('now', 'localtime'))
         );
         """
         
@@ -497,7 +555,8 @@ class TestUsageDatabase {
             session_count INTEGER DEFAULT 0,
             request_count INTEGER DEFAULT 0,
             models_used TEXT,
-            last_updated TEXT DEFAULT CURRENT_TIMESTAMP
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            updated_at TEXT DEFAULT (datetime('now', 'localtime'))
         );
         """
         
@@ -514,7 +573,8 @@ class TestUsageDatabase {
             cache_read_tokens BIGINT DEFAULT 0,
             session_count INTEGER DEFAULT 0,
             request_count INTEGER DEFAULT 0,
-            last_updated TEXT DEFAULT CURRENT_TIMESTAMP,
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            updated_at TEXT DEFAULT (datetime('now', 'localtime')),
             UNIQUE(model, date_range)
         );
         """
@@ -530,7 +590,8 @@ class TestUsageDatabase {
             session_count INTEGER DEFAULT 0,
             request_count INTEGER DEFAULT 0,
             last_used TEXT,
-            last_updated TEXT DEFAULT CURRENT_TIMESTAMP,
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            updated_at TEXT DEFAULT (datetime('now', 'localtime')),
             UNIQUE(project_path, date_range)
         );
         """
@@ -541,8 +602,10 @@ class TestUsageDatabase {
             "CREATE INDEX IF NOT EXISTS idx_usage_entries_model ON usage_entries(model)",
             "CREATE INDEX IF NOT EXISTS idx_usage_entries_project_path ON usage_entries(project_path)",
             "CREATE INDEX IF NOT EXISTS idx_usage_entries_session_id ON usage_entries(session_id)",
+            "CREATE INDEX IF NOT EXISTS idx_usage_entries_source_file ON usage_entries(source_file)",
             "CREATE INDEX IF NOT EXISTS idx_usage_entries_request_message ON usage_entries(request_id, message_id)",
             "CREATE INDEX IF NOT EXISTS idx_usage_entries_composite ON usage_entries(date_string, model, project_path)",
+            "CREATE INDEX IF NOT EXISTS idx_usage_entries_source_composite ON usage_entries(source_file, timestamp)",
             
             "CREATE INDEX IF NOT EXISTS idx_jsonl_files_path ON jsonl_files(file_path)",
             "CREATE INDEX IF NOT EXISTS idx_jsonl_files_modified ON jsonl_files(last_modified)",
@@ -584,8 +647,9 @@ class TestUsageDatabase {
             timestamp, model, input_tokens, output_tokens, 
             cache_creation_tokens, cache_read_tokens, cost,
             session_id, project_path, project_name, 
-            request_id, message_id, message_type, date_string
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            request_id, message_id, message_type, date_string, source_file,
+            created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         
         var statement: OpaquePointer?
@@ -629,6 +693,13 @@ class TestUsageDatabase {
         // 使用 SQLITE_TRANSIENT 确保字符串被复制
         let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
         
+        // 获取当前精确时间
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        let currentTime = formatter.string(from: Date())
+        
         _ = entry.timestamp.withCString { sqlite3_bind_text(statement, 1, $0, -1, SQLITE_TRANSIENT) }
         _ = entry.model.withCString { sqlite3_bind_text(statement, 2, $0, -1, SQLITE_TRANSIENT) }
         sqlite3_bind_int64(statement, 3, Int64(entry.inputTokens))
@@ -654,6 +725,11 @@ class TestUsageDatabase {
         
         _ = entry.messageType.withCString { sqlite3_bind_text(statement, 13, $0, -1, SQLITE_TRANSIENT) }
         _ = entry.dateString.withCString { sqlite3_bind_text(statement, 14, $0, -1, SQLITE_TRANSIENT) }
+        _ = entry.sourceFile.withCString { sqlite3_bind_text(statement, 15, $0, -1, SQLITE_TRANSIENT) }
+        
+        // 绑定时间字段 (参数 16 和 17)
+        _ = currentTime.withCString { sqlite3_bind_text(statement, 16, $0, -1, SQLITE_TRANSIENT) }
+        _ = currentTime.withCString { sqlite3_bind_text(statement, 17, $0, -1, SQLITE_TRANSIENT) }
     }
     
     func queryUsageEntries(limit: Int = 10) throws -> [TestUsageEntry] {
@@ -661,7 +737,7 @@ class TestUsageDatabase {
         SELECT timestamp, model, input_tokens, output_tokens,
                cache_creation_tokens, cache_read_tokens, cost,
                session_id, project_path, project_name,
-               request_id, message_id, message_type, date_string
+               request_id, message_id, message_type, date_string, source_file
         FROM usage_entries
         ORDER BY timestamp DESC
         LIMIT \(limit)
@@ -718,7 +794,8 @@ class TestUsageDatabase {
             requestId: getOptionalText(10),
             messageId: getOptionalText(11),
             messageType: getText(12),
-            dateString: getText(13)
+            dateString: getText(13),
+            sourceFile: getText(14)
         )
     }
     
@@ -734,7 +811,7 @@ class TestUsageDatabase {
         INSERT INTO daily_statistics (
             date_string, total_cost, total_tokens, input_tokens, output_tokens,
             cache_creation_tokens, cache_read_tokens, session_count, request_count,
-            models_used, last_updated
+            models_used, created_at, updated_at
         )
         SELECT 
             date_string,
@@ -747,7 +824,8 @@ class TestUsageDatabase {
             COUNT(DISTINCT session_id) as session_count,
             COUNT(*) as request_count,
             GROUP_CONCAT(DISTINCT model) as models_used,
-            CURRENT_TIMESTAMP as last_updated
+            datetime('now', 'localtime') as created_at,
+            datetime('now', 'localtime') as updated_at
         FROM usage_entries
         GROUP BY date_string
         ORDER BY date_string
@@ -796,8 +874,9 @@ class TestUsageDatabase {
     func recordFileProcessing(_ fileURL: URL, fileSize: Int64, lastModified: Date) throws {
         let insertSQL = """
         INSERT OR REPLACE INTO jsonl_files 
-        (file_path, file_name, file_size, last_modified, processing_status)
-        VALUES (?, ?, ?, ?, 'processing')
+        (file_path, file_name, file_size, last_modified, processing_status, 
+         created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'processing', datetime('now', 'localtime'), datetime('now', 'localtime'))
         """
         
         var statement: OpaquePointer?
@@ -831,8 +910,8 @@ class TestUsageDatabase {
         UPDATE jsonl_files 
         SET processing_status = 'completed', 
             entry_count = ?, 
-            last_processed = CURRENT_TIMESTAMP,
-            updated_at = CURRENT_TIMESTAMP
+            last_processed = datetime('now', 'localtime'),
+            updated_at = datetime('now', 'localtime')
         WHERE file_path = ?
         """
         
@@ -893,7 +972,7 @@ class TestUsageDatabase {
         INSERT INTO daily_statistics (
             date_string, total_cost, total_tokens, input_tokens, output_tokens,
             cache_creation_tokens, cache_read_tokens, session_count, request_count,
-            models_used, last_updated
+            models_used, created_at, updated_at
         )
         SELECT 
             date_string,
@@ -906,7 +985,8 @@ class TestUsageDatabase {
             COUNT(DISTINCT session_id) as session_count,
             COUNT(*) as request_count,
             GROUP_CONCAT(DISTINCT model) as models_used,
-            CURRENT_TIMESTAMP as last_updated
+            datetime('now', 'localtime') as created_at,
+            datetime('now', 'localtime') as updated_at
         FROM usage_entries
         GROUP BY date_string
         ORDER BY date_string
@@ -942,7 +1022,8 @@ class TestUsageDatabase {
         let insertSQL = """
         INSERT INTO model_statistics (
             model, date_range, total_cost, total_tokens, input_tokens, output_tokens,
-            cache_creation_tokens, cache_read_tokens, session_count, request_count, last_updated
+            cache_creation_tokens, cache_read_tokens, session_count, request_count, 
+            created_at, updated_at
         )
         SELECT 
             model,
@@ -955,7 +1036,8 @@ class TestUsageDatabase {
             SUM(cache_read_tokens) as cache_read_tokens,
             COUNT(DISTINCT session_id) as session_count,
             COUNT(*) as request_count,
-            CURRENT_TIMESTAMP as last_updated
+            datetime('now', 'localtime') as created_at,
+            datetime('now', 'localtime') as updated_at
         FROM usage_entries \(whereCondition)
         GROUP BY model
         ORDER BY total_cost DESC
@@ -990,7 +1072,7 @@ class TestUsageDatabase {
         let insertSQL = """
         INSERT INTO project_statistics (
             project_path, project_name, date_range, total_cost, total_tokens,
-            session_count, request_count, last_used, last_updated
+            session_count, request_count, last_used, created_at, updated_at
         )
         SELECT 
             project_path,
@@ -1001,7 +1083,8 @@ class TestUsageDatabase {
             COUNT(DISTINCT session_id) as session_count,
             COUNT(*) as request_count,
             MAX(timestamp) as last_used,
-            CURRENT_TIMESTAMP as last_updated
+            datetime('now', 'localtime') as created_at,
+            datetime('now', 'localtime') as updated_at
         FROM usage_entries \(whereCondition)
         GROUP BY project_path, project_name
         ORDER BY total_cost DESC
@@ -1015,10 +1098,28 @@ class TestUsageDatabase {
     func updateAllDateStrings() throws {
         print("🗓️ 修复所有日期字符串...")
         
-        let updateSQL = "UPDATE usage_entries SET date_string = substr(timestamp, 1, 10)"
+        // 使用 SQLite 的 datetime 函数进行精确的日期解析
+        // 这个方法可以正确处理 ISO8601 时间戳并转换为本地日期
+        let updateSQL = """
+        UPDATE usage_entries 
+        SET date_string = date(datetime(timestamp, 'localtime'))
+        WHERE timestamp IS NOT NULL AND timestamp != ''
+        """
         
         if sqlite3_exec(db, updateSQL, nil, nil, nil) == SQLITE_OK {
-            print("✅ 日期字符串修复完成")
+            // 检查是否有无法解析的时间戳，使用备用方法
+            let checkSQL = """
+            UPDATE usage_entries 
+            SET date_string = substr(timestamp, 1, 10)
+            WHERE date_string IS NULL OR date_string = '' OR date_string = '1970-01-01'
+            """
+            
+            if sqlite3_exec(db, checkSQL, nil, nil, nil) == SQLITE_OK {
+                print("✅ 日期字符串修复完成")
+            } else {
+                let errmsg = String(cString: sqlite3_errmsg(db)!)
+                throw TestError.databaseError("日期字符串备用修复失败: \(errmsg)")
+            }
         } else {
             let errmsg = String(cString: sqlite3_errmsg(db)!)
             throw TestError.databaseError("日期字符串修复失败: \(errmsg)")
@@ -1067,13 +1168,20 @@ class TestUsageDatabase {
             // 删除原表数据
             try executeSQL("DELETE FROM usage_entries")
             
-            // 插入去重后的数据
+            // 插入去重后的数据 (排除生成列 total_tokens)
             let insertSQL = """
-            INSERT INTO usage_entries 
+            INSERT INTO usage_entries (
+                id, timestamp, model, input_tokens, output_tokens, 
+                cache_creation_tokens, cache_read_tokens, cost,
+                session_id, project_path, project_name, 
+                request_id, message_id, message_type, date_string, source_file,
+                created_at, updated_at
+            )
             SELECT id, timestamp, model, input_tokens, output_tokens, 
                    cache_creation_tokens, cache_read_tokens, cost,
                    session_id, project_path, project_name, 
-                   request_id, message_id, message_type, date_string, created_at
+                   request_id, message_id, message_type, date_string, source_file,
+                   created_at, updated_at
             FROM temp_unique_entries 
             WHERE rn = 1
             """
@@ -1334,7 +1442,7 @@ class UsageDatabaseTest {
                 let rawEntry = try decoder.decode(RawJSONLEntry.self, from: jsonData)
                 
                 // 转换为标准使用记录（使用与项目完全一致的逻辑）
-                if let entry = rawEntry.toUsageEntry(projectPath: projectPath) {
+                if let entry = rawEntry.toUsageEntry(projectPath: projectPath, sourceFile: fileURL.lastPathComponent) {
                     entries.append(entry)
                     validLines += 1
                 } else {
@@ -1410,7 +1518,8 @@ class UsageDatabaseTest {
                 requestId: "req-\(index + 1)",
                 messageId: "msg-\(index + 1)",
                 messageType: "assistant",
-                dateString: dateFormatter.string(from: timestamp)
+                dateString: dateFormatter.string(from: timestamp),
+                sourceFile: "test-session-\(data.5).jsonl"
             )
         }
     }
@@ -1423,7 +1532,7 @@ class UsageDatabaseTest {
             "claude-4-opus": (15.0, 75.0, 18.75, 1.5),
             "claude-3.5-sonnet": (3.0, 15.0, 3.75, 0.3),
             "claude-3-haiku": (0.25, 1.25, 0.3, 0.03),
-            "gemini-2.5-pro": (1.25, 10.0, 0.31, 0.25)
+            "gemini-2.5-pro": (1.25, 10.0, 0.00, 0.00)
         ]
 
         guard let modelPricing = pricing[model] else { return 0.0 }
@@ -1508,7 +1617,8 @@ class UsageDatabaseTest {
                 requestId: "req-\(index + 1)",
                 messageId: "msg-\(index + 1)",
                 messageType: "assistant",
-                dateString: dateFormatter.string(from: timestamp)
+                dateString: dateFormatter.string(from: timestamp),
+                sourceFile: "test-session-\(data.5).jsonl"
             )
         }
     }

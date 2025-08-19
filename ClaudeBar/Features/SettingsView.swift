@@ -1,935 +1,160 @@
+//
+//  SettingsView.swift
+//  ClaudeBar
+//
+//  Created by 肖照东 on 2025/7/31.
+//
+
 import SwiftUI
+import Foundation
 import AppKit
 
-// MARK: - Settings Navigation Tab Definition
+// MARK: - Main Settings View
 
-enum SettingsNavigationTab: String, CaseIterable, Identifiable {
+struct SettingsView: View {
+    @EnvironmentObject private var userPreferences: UserPreferences
+    @EnvironmentObject private var appState: AppState
+    @State private var selectedTab: SettingsTab = .general
+    @State private var isResetDialogPresented = false
+    
+    var body: some View {
+        HStack(spacing: 0) {
+            // 左侧导航栏
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(SettingsTab.allCases, id: \.self) { tab in
+                    Button(action: {
+                        selectedTab = tab
+                    }) {
+                        HStack(spacing: 12) {
+                            Image(systemName: tab.icon)
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundColor(selectedTab == tab ? .white : .secondary)
+                                .frame(width: 20)
+                            
+                            Text(tab.title)
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(selectedTab == tab ? .white : .primary)
+                            
+                            Spacer()
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(selectedTab == tab ? Color.accentColor : Color.clear)
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+                
+                Spacer()
+                
+                // 重置按钮
+                Button("重置设置") {
+                    isResetDialogPresented = true
+                }
+                .foregroundColor(.red)
+                .font(.system(size: 13))
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+            }
+            .frame(width: 200)
+            .padding(.vertical, 20)
+            .background(Color(.controlBackgroundColor))
+            
+            // 右侧内容区域
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    // 标题
+                    HStack {
+                        Image(systemName: selectedTab.icon)
+                            .font(.system(size: 24, weight: .medium))
+                            .foregroundColor(.accentColor)
+                        
+                        Text(selectedTab.title)
+                            .font(.system(size: 28, weight: .bold))
+                            .foregroundColor(.primary)
+                        
+                        Spacer()
+                    }
+                    .padding(.bottom, 8)
+                    
+                    // 内容区域
+                    selectedTab.contentView
+                }
+                .padding(24)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(.windowBackgroundColor))
+        }
+        .frame(minWidth: 800, minHeight: 600)
+        .alert("重置设置", isPresented: $isResetDialogPresented) {
+            Button("取消", role: .cancel) { }
+            Button("重置", role: .destructive) {
+                userPreferences.resetToDefaults()
+            }
+        } message: {
+            Text("此操作将重置所有设置到默认值，此操作不可撤销。")
+        }
+    }
+}
+
+// MARK: - Settings Tab Enum
+
+enum SettingsTab: String, CaseIterable {
     case general = "general"
-    case config = "config"
+    case autoSync = "autoSync"
+    case notifications = "notifications"
     case appearance = "appearance"
     case advanced = "advanced"
     case about = "about"
     
-    var id: String { rawValue }
-    
     var title: String {
         switch self {
-        case .general:
-            return "通用设置"
-        case .config:
-            return "API 端点管理"
-        case .appearance:
-            return "外观主题"
-        case .advanced:
-            return "高级选项"
-        case .about:
-            return "关于应用"
+        case .general: return "通用"
+        case .appearance: return "外观"
+        case .notifications: return "通知"
+        case .autoSync: return "自动同步"
+        case .advanced: return "高级"
+        case .about: return "关于"
         }
     }
     
     var icon: String {
         switch self {
+        case .general: return "gear"
+        case .appearance: return "paintbrush"
+        case .notifications: return "bell"
+        case .autoSync: return "arrow.triangle.2.circlepath"
+        case .advanced: return "wrench.and.screwdriver"
+        case .about: return "info.circle"
+        }
+    }
+    
+    @ViewBuilder
+    var contentView: some View {
+        switch self {
         case .general:
-            return "gearshape.fill"
-        case .config:
-            return "folder.fill"
+            GeneralSettingsSection()
         case .appearance:
-            return "paintbrush.fill"
+            AppearanceSettingsSection()
+        case .notifications:
+            NotificationSettingsSection()
+        case .autoSync:
+            AutoSyncSettingsSection()
         case .advanced:
-            return "wrench.fill"
+            AdvancedSettingsSection()
         case .about:
-            return "info.circle.fill"
+            AboutSettingsSection()
         }
     }
 }
 
-struct SettingsView: View {
-    @EnvironmentObject private var appState: AppState
-    @Binding var isPresented: Bool
-    @State private var selectedTab: SettingsNavigationTab = .general
-    @State private var currentConfigPath: String = "未设置"
-    @State private var isChangingDirectory = false
-    
-    var body: some View {
-        HStack(spacing: 0) {
-            // 左侧导航菜单
-            SettingsSidebarView(
-                selectedTab: $selectedTab,
-                isPresented: $isPresented
-            )
-            .frame(width: 280)
-            .background(Color(.controlBackgroundColor))
-            
-            // 分隔线
-            Rectangle()
-                .fill(Color(.separatorColor))
-                .frame(width: 1)
-            
-            // 右侧内容区域
-            SettingsContentView(
-                selectedTab: selectedTab,
-                currentConfigPath: $currentConfigPath,
-                isChangingDirectory: $isChangingDirectory
-            )
-            .frame(maxWidth: .infinity)
-            .background(Color(.windowBackgroundColor))
-        }
-        .frame(width: 800, height: 600)
-        .background(Color(.windowBackgroundColor))
-        .onAppear {
-            updateCurrentConfigPath()
-        }
-    }
-    
-    private func updateCurrentConfigPath() {
-        if let configService = appState.configService as? ConfigService {
-            currentConfigPath = configService.configDirectoryPath
-        } else {
-            let defaultPath = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".claude").path
-            currentConfigPath = defaultPath
-        }
-    }
-}
+// MARK: - General Settings Section
 
-// MARK: - Settings Sidebar View
-
-struct SettingsSidebarView: View {
-    @Binding var selectedTab: SettingsNavigationTab
-    @Binding var isPresented: Bool
-    @EnvironmentObject private var appState: AppState
+struct GeneralSettingsSection: View {
+    @EnvironmentObject private var userPreferences: UserPreferences
     
-    var body: some View {
-        VStack(spacing: 0) {
-            // 设置头部
-            SettingsHeaderSection(isPresented: $isPresented)
-            
-            // 导航菜单项
-            ScrollView {
-                LazyVStack(spacing: 4) {
-                    ForEach(SettingsNavigationTab.allCases) { tab in
-                        SettingsTabItem(
-                            tab: tab,
-                            isSelected: selectedTab == tab,
-                            action: {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    selectedTab = tab
-                                }
-                            }
-                        )
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-            }
-            
-            Spacer()
-            
-            // 底部区域
-            SettingsBottomSection()
-        }
-    }
-}
-
-// MARK: - Settings Tab Item
-
-struct SettingsTabItem: View {
-    let tab: SettingsNavigationTab
-    let isSelected: Bool
-    let action: () -> Void
-    @State private var isHovered = false
-    
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: tab.icon)
-                    .font(.system(size: DesignTokens.Typography.IconSize.medium, weight: .medium))
-                    .foregroundColor(iconColor)
-                    .frame(width: DesignTokens.Size.Icon.large)
-                
-                Text(tab.title)
-                    .font(isSelected ? DesignTokens.Typography.navigationLabelSelected : DesignTokens.Typography.navigationLabel)
-                    .foregroundColor(textColor)
-                
-                Spacer()
-                
-                if isSelected {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color.blue)
-                        .frame(width: 3, height: 16)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(backgroundFill)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-        }
-        .buttonStyle(PlainButtonStyle())
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                isHovered = hovering
-            }
-        }
-    }
-    
-    private var iconColor: Color {
-        if isSelected {
-            return .blue
-        } else {
-            return isHovered ? .primary : .secondary
-        }
-    }
-    
-    private var textColor: Color {
-        if isSelected {
-            return .primary
-        } else {
-            return isHovered ? .primary : .secondary
-        }
-    }
-    
-    private var backgroundFill: Color {
-        if isSelected {
-            return Color.blue.opacity(0.1)
-        } else if isHovered {
-            return Color.gray.opacity(0.08)
-        } else {
-            return Color.clear
-        }
-    }
-}
-
-// MARK: - Settings Header Section
-
-struct SettingsHeaderSection: View {
-    @Binding var isPresented: Bool
-    
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                // 返回按钮
-                Button(action: {
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        isPresented = false
-                    }
-                }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: DesignTokens.Typography.IconSize.small, weight: .semibold))
-                        Text("返回")
-                            .font(DesignTokens.Typography.caption)
-                    }
-                    .foregroundColor(.blue)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color.blue.opacity(0.1))
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-                
-                Spacer()
-                
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text("设置")
-                        .font(DesignTokens.Typography.subtitle)
-                        .foregroundColor(.primary)
-                    
-                    Text("应用配置")
-                        .font(DesignTokens.Typography.small)
-                        .foregroundColor(.secondary)
-                }
-            }
-            .padding(.horizontal, DesignTokens.Spacing.Page.cardPadding)
-            .padding(.vertical, DesignTokens.Spacing.lg)
-            
-            // 分隔线
-            Rectangle()
-                .fill(Color(.separatorColor))
-                .frame(height: 1)
-        }
-    }
-}
-
-// MARK: - Settings Bottom Section
-
-struct SettingsBottomSection: View {
-    var body: some View {
-        VStack(spacing: 0) {
-            Rectangle()
-                .fill(Color(.separatorColor))
-                .frame(height: 1)
-            
-            HStack {
-                Text("版本 1.0.0")
-                    .font(DesignTokens.Typography.small)
-                    .foregroundColor(.secondary)
-                
-                Spacer()
-                
-                Button("帮助") {
-                    if let url = URL(string: "https://docs.anthropic.com/claude/docs") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
-                .font(DesignTokens.Typography.small)
-                .foregroundColor(.blue)
-                .buttonStyle(PlainButtonStyle())
-            }
-            .padding(.horizontal, DesignTokens.Spacing.Page.cardPadding)
-            .padding(.vertical, DesignTokens.Spacing.md)
-        }
-    }
-}
-
-// MARK: - Settings Content View
-
-struct SettingsContentView: View {
-    let selectedTab: SettingsNavigationTab
-    @Binding var currentConfigPath: String
-    @Binding var isChangingDirectory: Bool
-    @EnvironmentObject private var appState: AppState
-    
-    var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                switch selectedTab {
-                case .general:
-                    GeneralSettingsView()
-                case .config:
-                    ConfigSettingsView(
-                        currentConfigPath: $currentConfigPath,
-                        isChangingDirectory: $isChangingDirectory
-                    )
-                case .appearance:
-                    AppearanceSettingsView()
-                case .advanced:
-                    AdvancedSettingsView()
-                case .about:
-                    AboutSettingsView()
-                }
-            }
-            .padding(DesignTokens.Spacing.Page.padding)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .animation(.easeInOut(duration: 0.3), value: selectedTab)
-    }
-}
-
-// MARK: - Individual Settings Pages
-
-struct GeneralSettingsView: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.Page.componentSpacing) {
-            // 页面标题
-            VStack(alignment: .leading, spacing: 8) {
-                Text("通用设置")
-                    .font(DesignTokens.Typography.pageTitle)
-                    .foregroundColor(.primary)
-                
-                Text("配置应用的基本行为和偏好")
-                    .font(DesignTokens.Typography.subtitle)
-                    .foregroundColor(.secondary)
-            }
-            
-            // 通用设置内容
-            VStack(spacing: 16) {
-                ModernAppSettingsSection()
-                
-                NotificationSettingsSection()
-                
-                AutoRefreshSettingsSection()
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-struct ConfigSettingsView: View {
-    @Binding var currentConfigPath: String
-    @Binding var isChangingDirectory: Bool
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.Page.componentSpacing) {
-            // 页面标题
-            VStack(alignment: .leading, spacing: 8) {
-                Text("API 配置管理")
-                    .font(DesignTokens.Typography.pageTitle)
-                    .foregroundColor(.primary)
-                
-                Text("管理 Claude CLI 配置文件和目录")
-                    .font(DesignTokens.Typography.subtitle)
-                    .foregroundColor(.secondary)
-            }
-            
-            // API 配置管理内容
-            ModernConfigDirectorySection(
-                currentPath: $currentConfigPath,
-                isChangingDirectory: $isChangingDirectory
-            )
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-struct AppearanceSettingsView: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.Page.componentSpacing) {
-            // 页面标题
-            VStack(alignment: .leading, spacing: 8) {
-                Text("外观主题")
-                    .font(DesignTokens.Typography.pageTitle)
-                    .foregroundColor(.primary)
-                
-                Text("自定义应用界面的外观和主题")
-                    .font(DesignTokens.Typography.subtitle)
-                    .foregroundColor(.secondary)
-            }
-            
-            // 外观设置内容
-            ThemeSettingsSection()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-struct AdvancedSettingsView: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.Page.componentSpacing) {
-            // 页面标题
-            VStack(alignment: .leading, spacing: 8) {
-                Text("高级选项")
-                    .font(DesignTokens.Typography.pageTitle)
-                    .foregroundColor(.primary)
-                
-                Text("高级功能和开发者选项")
-                    .font(DesignTokens.Typography.subtitle)
-                    .foregroundColor(.secondary)
-            }
-            
-            // 高级设置内容
-            DeveloperSettingsSection()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-struct AboutSettingsView: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.Page.componentSpacing) {
-            // 页面标题
-            VStack(alignment: .leading, spacing: 8) {
-                Text("关于应用")
-                    .font(DesignTokens.Typography.pageTitle)
-                    .foregroundColor(.primary)
-                
-                Text("应用信息、版本和帮助资源")
-                    .font(DesignTokens.Typography.subtitle)
-                    .foregroundColor(.secondary)
-            }
-            
-            // 关于内容
-            ModernAboutSection()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-struct CompactConfigDirectorySection: View {
-    @EnvironmentObject private var appState: AppState
-    @Binding var currentPath: String
-    @Binding var isChangingDirectory: Bool
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // 区域标题
-            HStack {
-                Text("配置目录")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.primary)
-                
-                Spacer()
-                
-                DirectoryStatusIndicator(path: currentPath)
-            }
-            
-            // 当前配置目录显示
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Image(systemName: "folder.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(.blue)
-                    
-                    Text(shortenPath(currentPath))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    
-                    Spacer()
-                    
-                    // 打开目录按钮
-                    Button(action: openCurrentDirectory) {
-                        Image(systemName: "arrow.up.right.square")
-                            .font(.system(size: 10))
-                            .foregroundColor(.blue)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .help("在 Finder 中打开")
-                }
-                .padding(8)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color(.controlBackgroundColor))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                        )
-                )
-            }
-            
-            // 操作按钮区域
-            VStack(spacing: 8) {
-                // 选择配置目录按钮
-                Button(action: selectConfigDirectory) {
-                    HStack(spacing: 6) {
-                        if isChangingDirectory {
-                            ProgressView()
-                                .controlSize(.small)
-                                .scaleEffect(0.7)
-                        } else {
-                            Image(systemName: "folder.badge.gearshape")
-                                .font(.system(size: 12, weight: .medium))
-                        }
-                        
-                        Text(isChangingDirectory ? "选择中..." : "选择目录")
-                            .font(.system(size: 12, weight: .medium))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 30)
-                    .foregroundColor(isChangingDirectory ? .secondary : .white)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(isChangingDirectory ? Color.gray.opacity(0.3) : Color.blue)
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-                .disabled(isChangingDirectory)
-                
-                // 重置为默认目录按钮
-                Button(action: resetToDefaultDirectory) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 12, weight: .medium))
-                        
-                        Text("重置默认")
-                            .font(.system(size: 12, weight: .medium))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 30)
-                    .foregroundColor(.blue)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color.blue.opacity(0.1))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(Color.blue.opacity(0.3), lineWidth: 1)
-                            )
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-                .disabled(isChangingDirectory)
-            }
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(.controlBackgroundColor))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.gray.opacity(0.2), lineWidth: 1)
-                )
-        )
-    }
-    
-    private func shortenPath(_ path: String) -> String {
-        let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
-        if path.hasPrefix(homeDir) {
-            return "~" + String(path.dropFirst(homeDir.count))
-        }
-        return path
-    }
-    
-    private func openCurrentDirectory() {
-        let url = URL(fileURLWithPath: currentPath)
-        NSWorkspace.shared.open(url)
-    }
-    
-    private func selectConfigDirectory() {
-        isChangingDirectory = true
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            let openPanel = NSOpenPanel()
-            openPanel.title = "选择 Claude CLI 配置目录"
-            openPanel.message = "请选择包含 Claude CLI API 配置文件的目录"
-            openPanel.canChooseFiles = false
-            openPanel.canChooseDirectories = true
-            openPanel.allowsMultipleSelection = false
-            openPanel.showsHiddenFiles = true
-            
-            let currentURL = URL(fileURLWithPath: currentPath)
-            openPanel.directoryURL = currentURL.deletingLastPathComponent()
-            
-            let response = openPanel.runModal()
-            if response == .OK, let selectedURL = openPanel.url {
-                updateConfigDirectory(to: selectedURL)
-            }
-            
-            isChangingDirectory = false
-        }
-    }
-    
-    private func resetToDefaultDirectory() {
-        isChangingDirectory = true
-        
-        let defaultURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".claude")
-        
-        updateConfigDirectory(to: defaultURL)
-        
-        isChangingDirectory = false
-    }
-    
-    private func updateConfigDirectory(to url: URL) {
-        if let bookmarkData = try? url.bookmarkData(
-            options: [.withSecurityScope],
-            includingResourceValuesForKeys: nil,
-            relativeTo: nil
-        ) {
-            UserDefaults.standard.set(bookmarkData, forKey: "claudeDirectoryBookmark")
-            UserDefaults.standard.set(url.path, forKey: "configDirectoryPath")
-        }
-        
-        currentPath = url.path
-        appState.updateConfigDirectory(url)
-        
-        Task {
-            await appState.loadConfigs()
-        }
-    }
-}
-
-struct CompactAppSettingsSection: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("应用设置")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.primary)
-            
-            VStack(spacing: 8) {
-                CompactSettingRow(
-                    icon: "bell.fill",
-                    title: "显示通知",
-                    control: AnyView(
-                        Toggle("", isOn: .constant(true))
-                            .controlSize(.small)
-                    )
-                )
-                
-                CompactSettingRow(
-                    icon: "clock.fill",
-                    title: "自动刷新",
-                    control: AnyView(
-                        Toggle("", isOn: .constant(false))
-                            .controlSize(.small)
-                    )
-                )
-            }
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(.controlBackgroundColor))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.gray.opacity(0.2), lineWidth: 1)
-                )
-        )
-    }
-}
-
-struct CompactSettingRow: View {
-    let icon: String
-    let title: String
-    let control: AnyView
-    
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.blue)
-                .frame(width: 16)
-            
-            Text(title)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.primary)
-            
-            Spacer()
-            
-            control
-        }
-        .padding(.vertical, 2)
-    }
-}
-
-struct CompactAboutSection: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("关于")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.primary)
-            
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 10) {
-                    Image(systemName: "terminal.fill")
-                        .font(.system(size: 18))
-                        .foregroundColor(.blue)
-                    
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Claude CLI API 切换器")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(.primary)
-                        
-                        Text("版本 1.0.0")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(.secondary)
-                    }
-                }
-                
-                HStack(spacing: 12) {
-                    Button("GitHub") {
-                        if let url = URL(string: "https://github.com/anthropics/claude-cli") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.blue)
-                    .buttonStyle(PlainButtonStyle())
-                    
-                    Button("帮助") {
-                        if let url = URL(string: "https://docs.anthropic.com/claude/docs") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.blue)
-                    .buttonStyle(PlainButtonStyle())
-                }
-            }
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(.controlBackgroundColor))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.gray.opacity(0.2), lineWidth: 1)
-                )
-        )
-    }
-}
-
-// MARK: - Modern Settings Components
-
-struct ModernConfigDirectorySection: View {
-    @EnvironmentObject private var appState: AppState
-    @Binding var currentPath: String
-    @Binding var isChangingDirectory: Bool
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            // 区域标题
-            HStack {
-                Text("配置目录")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(.primary)
-                
-                Spacer()
-                
-                DirectoryStatusIndicator(path: currentPath)
-            }
-            
-            // 当前配置目录显示
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 12) {
-                    Image(systemName: "folder.fill")
-                        .font(.system(size: 20))
-                        .foregroundColor(.blue)
-                    
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("当前配置目录")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(.primary)
-                        
-                        Text(shortenPath(currentPath))
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(.secondary)
-                            .lineLimit(2)
-                            .truncationMode(.middle)
-                    }
-                    
-                    Spacer()
-                    
-                    // 打开目录按钮
-                    Button(action: openCurrentDirectory) {
-                        Image(systemName: "arrow.up.right.square")
-                            .font(.system(size: 16))
-                            .foregroundColor(.blue)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .help("在 Finder 中打开")
-                }
-                .padding(16)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color(.controlBackgroundColor))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(Color.blue.opacity(0.2), lineWidth: 1)
-                        )
-                )
-                
-                // 操作按钮区域
-                HStack(spacing: 12) {
-                    // 选择配置目录按钮
-                    Button(action: selectConfigDirectory) {
-                        HStack(spacing: 8) {
-                            if isChangingDirectory {
-                                ProgressView()
-                                    .controlSize(.small)
-                                    .scaleEffect(0.8)
-                            } else {
-                                Image(systemName: "folder.badge.gearshape")
-                                    .font(.system(size: 14, weight: .medium))
-                            }
-                            
-                            Text(isChangingDirectory ? "选择中..." : "选择目录")
-                                .font(.system(size: 14, weight: .medium))
-                        }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 40)
-                        .foregroundColor(isChangingDirectory ? .secondary : .white)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(isChangingDirectory ? Color.gray.opacity(0.3) : Color.blue)
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .disabled(isChangingDirectory)
-                    
-                    // 重置为默认目录按钮
-                    Button(action: resetToDefaultDirectory) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 14, weight: .medium))
-                            
-                            Text("重置默认")
-                                .font(.system(size: 14, weight: .medium))
-                        }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 40)
-                        .foregroundColor(.blue)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(Color.blue.opacity(0.1))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .stroke(Color.blue.opacity(0.3), lineWidth: 1)
-                                )
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .disabled(isChangingDirectory)
-                }
-            }
-        }
-        .padding(DesignTokens.Spacing.Page.cardPadding)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.controlBackgroundColor))
-        )
-    }
-    
-    // 复用原有的私有方法
-    private func shortenPath(_ path: String) -> String {
-        let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
-        if path.hasPrefix(homeDir) {
-            return "~" + String(path.dropFirst(homeDir.count))
-        }
-        return path
-    }
-    
-    private func openCurrentDirectory() {
-        let url = URL(fileURLWithPath: currentPath)
-        NSWorkspace.shared.open(url)
-    }
-    
-    private func selectConfigDirectory() {
-        isChangingDirectory = true
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            let openPanel = NSOpenPanel()
-            openPanel.title = "选择 Claude CLI 配置目录"
-            openPanel.message = "请选择包含 Claude CLI API 配置文件的目录"
-            openPanel.canChooseFiles = false
-            openPanel.canChooseDirectories = true
-            openPanel.allowsMultipleSelection = false
-            openPanel.showsHiddenFiles = true
-            
-            let currentURL = URL(fileURLWithPath: currentPath)
-            openPanel.directoryURL = currentURL.deletingLastPathComponent()
-            
-            let response = openPanel.runModal()
-            if response == .OK, let selectedURL = openPanel.url {
-                updateConfigDirectory(to: selectedURL)
-            }
-            
-            isChangingDirectory = false
-        }
-    }
-    
-    private func resetToDefaultDirectory() {
-        isChangingDirectory = true
-        
-        let defaultURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".claude")
-        
-        updateConfigDirectory(to: defaultURL)
-        
-        isChangingDirectory = false
-    }
-    
-    private func updateConfigDirectory(to url: URL) {
-        if let bookmarkData = try? url.bookmarkData(
-            options: [.withSecurityScope],
-            includingResourceValuesForKeys: nil,
-            relativeTo: nil
-        ) {
-            UserDefaults.standard.set(bookmarkData, forKey: "claudeDirectoryBookmark")
-            UserDefaults.standard.set(url.path, forKey: "configDirectoryPath")
-        }
-        
-        currentPath = url.path
-        appState.updateConfigDirectory(url)
-        
-        Task {
-            await appState.loadConfigs()
-        }
-    }
-}
-
-struct ModernAppSettingsSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("应用行为")
@@ -938,31 +163,31 @@ struct ModernAppSettingsSection: View {
             
             VStack(spacing: 12) {
                 ModernSettingRow(
-                    icon: "bell.fill",
-                    title: "显示通知",
-                    description: "API 端点切换成功时显示通知",
+                    icon: "power",
+                    title: "开机自启动",
+                    description: "系统启动时自动启动应用",
                     control: AnyView(
-                        Toggle("", isOn: .constant(true))
+                        Toggle("", isOn: $userPreferences.launchAtLogin)
                             .controlSize(.small)
                     )
                 )
                 
                 ModernSettingRow(
-                    icon: "clock.fill",
-                    title: "自动刷新",
-                    description: "定时自动刷新配置列表",
+                    icon: "dock.rectangle",
+                    title: "隐藏 Dock 图标",
+                    description: "仅在菜单栏显示应用图标",
                     control: AnyView(
-                        Toggle("", isOn: .constant(false))
+                        Toggle("", isOn: $userPreferences.hideDockIcon)
                             .controlSize(.small)
                     )
                 )
                 
                 ModernSettingRow(
-                    icon: "menubar.arrow.up.rectangle",
-                    title: "启动时显示",
-                    description: "应用启动时自动显示主界面",
+                    icon: "menubar.rectangle",
+                    title: "显示在状态栏",
+                    description: "在系统状态栏显示应用图标",
                     control: AnyView(
-                        Toggle("", isOn: .constant(false))
+                        Toggle("", isOn: $userPreferences.showInStatusBar)
                             .controlSize(.small)
                     )
                 )
@@ -976,219 +201,52 @@ struct ModernAppSettingsSection: View {
     }
 }
 
-struct NotificationSettingsSection: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("通知设置")
-                .font(DesignTokens.Typography.sectionTitle)
-                .foregroundColor(.primary)
-            
-            VStack(spacing: 12) {
-                ModernSettingRow(
-                    icon: "checkmark.circle.fill",
-                    title: "成功通知",
-                    description: "API 端点切换成功时显示通知",
-                    control: AnyView(
-                        Toggle("", isOn: .constant(true))
-                            .controlSize(.small)
-                    )
-                )
-                
-                ModernSettingRow(
-                    icon: "exclamationmark.triangle.fill",
-                    title: "错误通知",
-                    description: "出现错误时显示通知",
-                    control: AnyView(
-                        Toggle("", isOn: .constant(true))
-                            .controlSize(.small)
-                    )
-                )
-            }
-        }
-        .padding(DesignTokens.Spacing.Page.cardPadding)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.controlBackgroundColor))
-        )
-    }
-}
+// MARK: - Appearance Settings Section
 
-struct AutoRefreshSettingsSection: View {
+struct AppearanceSettingsSection: View {
+    @EnvironmentObject private var userPreferences: UserPreferences
+    
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("自动刷新")
-                .font(DesignTokens.Typography.sectionTitle)
-                .foregroundColor(.primary)
-            
-            VStack(spacing: 12) {
-                ModernSettingRow(
-                    icon: "arrow.clockwise",
-                    title: "启用自动刷新",
-                    description: "定期检查配置文件变化",
-                    control: AnyView(
-                        Toggle("", isOn: .constant(false))
-                            .controlSize(.small)
-                    )
-                )
+        VStack(alignment: .leading, spacing: 24) {
+            // 外观主题
+            VStack(alignment: .leading, spacing: 16) {
+                Text("外观主题")
+                    .font(DesignTokens.Typography.sectionTitle)
+                    .foregroundColor(.primary)
                 
-                ModernSettingRow(
-                    icon: "timer",
-                    title: "刷新间隔",
-                    description: "自动刷新的时间间隔（秒）",
-                    control: AnyView(
-                        Stepper("30秒", value: .constant(30), in: 10...300, step: 10)
-                            .labelsHidden()
-                    )
-                )
-            }
-        }
-        .padding(DesignTokens.Spacing.Page.cardPadding)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.controlBackgroundColor))
-        )
-    }
-}
-
-struct ThemeSettingsSection: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("界面主题")
-                .font(DesignTokens.Typography.sectionTitle)
-                .foregroundColor(.primary)
-            
-            VStack(spacing: 12) {
-                ModernSettingRow(
-                    icon: "sun.max.fill",
-                    title: "外观模式",
-                    description: "选择应用的外观主题",
-                    control: AnyView(
-                        Picker("", selection: .constant("auto")) {
-                            Text("自动").tag("auto")
-                            Text("浅色").tag("light")
-                            Text("深色").tag("dark")
-                        }
-                        .pickerStyle(SegmentedPickerStyle())
-                        .frame(width: 180)
-                    )
-                )
-                
-                ModernSettingRow(
-                    icon: "paintbrush.fill",
-                    title: "强调色",
-                    description: "选择界面的强调色",
-                    control: AnyView(
-                        HStack(spacing: 8) {
-                            ForEach(["blue", "green", "orange", "red", "purple"], id: \.self) { color in
-                                Circle()
-                                    .fill(Color(color))
-                                    .frame(width: 20, height: 20)
-                                    .overlay(
-                                        Circle()
-                                            .stroke(Color.primary, lineWidth: color == "blue" ? 2 : 0)
-                                    )
+                VStack(spacing: 12) {
+                    ModernSettingRow(
+                        icon: "circle.lefthalf.filled",
+                        title: "主题",
+                        description: "选择应用外观主题",
+                        control: AnyView(
+                            Picker("", selection: $userPreferences.colorScheme) {
+                                Text("跟随系统").tag("auto")
+                                Text("浅色").tag("light")
+                                Text("深色").tag("dark")
                             }
-                        }
+                            .pickerStyle(SegmentedPickerStyle())
+                            .frame(width: 200)
+                        )
                     )
-                )
-            }
-        }
-        .padding(DesignTokens.Spacing.Page.cardPadding)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.controlBackgroundColor))
-        )
-    }
-}
-
-struct DeveloperSettingsSection: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("开发者选项")
-                .font(DesignTokens.Typography.sectionTitle)
-                .foregroundColor(.primary)
-            
-            VStack(spacing: 12) {
-                ModernSettingRow(
-                    icon: "terminal.fill",
-                    title: "调试日志",
-                    description: "启用详细的调试日志记录",
-                    control: AnyView(
-                        Toggle("", isOn: .constant(false))
-                            .controlSize(.small)
-                    )
-                )
-                
-                ModernSettingRow(
-                    icon: "doc.text.fill",
-                    title: "导出日志",
-                    description: "导出应用日志文件",
-                    control: AnyView(
-                        Button("导出") {
-                            // 导出日志逻辑
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                    )
-                )
-                
-                ModernSettingRow(
-                    icon: "trash.fill",
-                    title: "重置所有设置",
-                    description: "将所有设置恢复为默认值",
-                    control: AnyView(
-                        Button("重置") {
-                            // 重置设置逻辑
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .foregroundColor(.red)
-                    )
-                )
-            }
-        }
-        .padding(DesignTokens.Spacing.Page.cardPadding)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.controlBackgroundColor))
-        )
-    }
-}
-
-struct ModernAboutSection: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            // 应用信息
-            HStack(spacing: 16) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 16)
-                        .fill(LinearGradient(
-                            colors: [Color.blue.opacity(0.8), Color.blue],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ))
-                        .frame(width: 64, height: 64)
                     
-                    Image(systemName: "terminal.fill")
-                        .foregroundColor(.white)
-                        .font(.system(size: 28, weight: .medium))
+                    ModernSettingRow(
+                        icon: "paintpalette",
+                        title: "主色调",
+                        description: "应用的主色调",
+                        control: AnyView(
+                            Picker("", selection: $userPreferences.accentColor) {
+                                Text("蓝色").tag("blue")
+                                Text("绿色").tag("green")
+                                Text("橙色").tag("orange")
+                                Text("紫色").tag("purple")
+                                Text("红色").tag("red")
+                            }
+                            .pickerStyle(MenuPickerStyle())
+                            .frame(width: 100)
+                        )
+                    )
                 }
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Claude 配置管理器")
-                        .font(DesignTokens.Typography.pageTitle)
-                        .foregroundColor(.primary)
-                    
-                    Text("版本 1.0.0 (Build 1)")
-                        .font(DesignTokens.Typography.body)
-                        .foregroundColor(.secondary)
-                    
-                    Text("© 2024 Claude Config Manager")
-                        .font(DesignTokens.Typography.small)
-                        .foregroundColor(.secondary)
-                }
-                
-                Spacer()
             }
             .padding(DesignTokens.Spacing.Page.cardPadding)
             .background(
@@ -1196,35 +254,579 @@ struct ModernAboutSection: View {
                     .fill(Color(.controlBackgroundColor))
             )
             
-            // 链接和帮助
+            // 字体设置
             VStack(alignment: .leading, spacing: 16) {
-                Text("帮助和支持")
+                Text("字体设置")
+                    .font(DesignTokens.Typography.sectionTitle)
+                    .foregroundColor(.primary)
+                
+                VStack(spacing: 12) {
+                    ModernSettingRow(
+                        icon: "textformat.size",
+                        title: "字体大小",
+                        description: "调整界面字体大小",
+                        control: AnyView(
+                            VStack(spacing: 4) {
+                                Slider(
+                                    value: $userPreferences.fontSize,
+                                    in: 12...18,
+                                    step: 1
+                                )
+                                .frame(width: 150)
+                                
+                                Text("\(Int(userPreferences.fontSize))pt")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.secondary)
+                            }
+                        )
+                    )
+                }
+            }
+            .padding(DesignTokens.Spacing.Page.cardPadding)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(.controlBackgroundColor))
+            )
+            
+            // 界面设置
+            VStack(alignment: .leading, spacing: 16) {
+                Text("界面设置")
+                    .font(DesignTokens.Typography.sectionTitle)
+                    .foregroundColor(.primary)
+                
+                VStack(spacing: 12) {
+                    ModernSettingRow(
+                        icon: "rectangle.compress.vertical",
+                        title: "紧凑模式",
+                        description: "使用更紧凑的界面布局",
+                        control: AnyView(
+                            Toggle("", isOn: $userPreferences.compactMode)
+                                .controlSize(.small)
+                        )
+                    )
+                    
+                    ModernSettingRow(
+                        icon: "sparkles",
+                        title: "启用动画",
+                        description: "界面切换和状态变化动画",
+                        control: AnyView(
+                            Toggle("", isOn: $userPreferences.enableAnimations)
+                                .controlSize(.small)
+                        )
+                    )
+                    
+                    ModernSettingRow(
+                        icon: "terminal",
+                        title: "菜单栏图标样式",
+                        description: "菜单栏显示的图标样式",
+                        control: AnyView(
+                            Picker("", selection: $userPreferences.menuBarIconStyle) {
+                                Text("终端").tag("terminal")
+                                Text("齿轮").tag("gear")
+                                Text("圆形").tag("circle")
+                            }
+                            .pickerStyle(MenuPickerStyle())
+                            .frame(width: 100)
+                        )
+                    )
+                }
+            }
+            .padding(DesignTokens.Spacing.Page.cardPadding)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(.controlBackgroundColor))
+            )
+        }
+    }
+}
+
+// MARK: - Notification Settings Section
+
+struct NotificationSettingsSection: View {
+    @EnvironmentObject private var userPreferences: UserPreferences
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            // 通知设置
+            VStack(alignment: .leading, spacing: 16) {
+                Text("通知设置")
+                    .font(DesignTokens.Typography.sectionTitle)
+                    .foregroundColor(.primary)
+                
+                VStack(spacing: 12) {
+                    ModernSettingRow(
+                        icon: "checkmark.circle",
+                        title: "成功通知",
+                        description: "操作成功时显示通知",
+                        control: AnyView(
+                            Toggle("", isOn: $userPreferences.showSuccessNotifications)
+                                .controlSize(.small)
+                        )
+                    )
+                    
+                    ModernSettingRow(
+                        icon: "exclamationmark.triangle",
+                        title: "错误通知",
+                        description: "操作失败时显示通知",
+                        control: AnyView(
+                            Toggle("", isOn: $userPreferences.showErrorNotifications)
+                                .controlSize(.small)
+                        )
+                    )
+                }
+            }
+            .padding(DesignTokens.Spacing.Page.cardPadding)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(.controlBackgroundColor))
+            )
+        }
+    }
+}
+
+// MARK: - Auto Sync Settings Section
+
+struct AutoSyncSettingsSection: View {
+    @EnvironmentObject private var userPreferences: UserPreferences
+    @EnvironmentObject private var appState: AppState
+    @State private var showingManualSyncAlert = false
+    @State private var isPerformingManualSync = false
+    
+    /*
+    var autoSyncService: AutoSyncService {
+        // 通过AppState获取AutoSyncService实例
+        return appState.autoSyncService
+    }
+    */
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("自动同步")
+                .font(DesignTokens.Typography.sectionTitle)
+                .foregroundColor(.primary)
+            
+            VStack(spacing: 12) {
+                // 自动同步开关
+                ModernSettingRow(
+                    icon: "arrow.triangle.2.circlepath",
+                    title: "启用自动同步",
+                    description: "定期自动同步使用统计数据",
+                    control: AnyView(
+                        Toggle("", isOn: $userPreferences.autoSyncEnabled)
+                            .controlSize(.small)
+                    )
+                )
+                
+                // 同步间隔选择器（仅在自动同步启用时显示）
+                if userPreferences.autoSyncEnabled {
+                    ModernSettingRow(
+                        icon: "clock.arrow.circlepath",
+                        title: "同步间隔",
+                        description: "自动同步的时间间隔",
+                        control: AnyView(
+                            Picker("", selection: Binding(
+                                get: { userPreferences.currentSyncInterval },
+                                set: { userPreferences.setSyncInterval($0) }
+                            )) {
+                                ForEach(SyncInterval.allCases, id: \.self) { interval in
+                                    Text(interval.displayName).tag(interval)
+                                }
+                            }
+                            .pickerStyle(MenuPickerStyle())
+                            .frame(width: 100)
+                        )
+                    )
+                }
+                
+                // 同步通知开关
+                ModernSettingRow(
+                    icon: "bell.badge",
+                    title: "同步通知",
+                    description: "同步完成时显示通知",
+                    control: AnyView(
+                        Toggle("", isOn: $userPreferences.showSyncNotifications)
+                            .controlSize(.small)
+                    )
+                )
+                
+                // 最后同步时间显示
+                if let lastSyncDate = userPreferences.lastFullSyncDate {
+                    ModernSettingRow(
+                        icon: "clock.fill",
+                        title: "最后同步时间",
+                        description: formatLastSyncTime(lastSyncDate),
+                        control: AnyView(
+                            Text(formatSyncTime(lastSyncDate))
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(.secondary)
+                        )
+                    )
+                } else {
+                    ModernSettingRow(
+                        icon: "clock.fill",
+                        title: "最后同步时间",
+                        description: "尚未执行过同步",
+                        control: AnyView(
+                            Text("从未同步")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(.secondary)
+                        )
+                    )
+                }
+                
+                // 手动同步按钮
+                HStack(spacing: 16) {
+                    Image(systemName: "icloud.and.arrow.up")
+                        .font(.system(size: DesignTokens.Typography.IconSize.medium, weight: .medium))
+                        .foregroundColor(.blue)
+                        .frame(width: DesignTokens.Size.Icon.large)
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("手动同步")
+                            .font(DesignTokens.Typography.body)
+                            .foregroundColor(.primary)
+                        
+                        Text("立即执行完整数据同步")
+                            .font(DesignTokens.Typography.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    Button(isPerformingManualSync ? "同步中..." : "立即同步") {
+                        performManualSync()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(isPerformingManualSync)
+                }
+                .padding(.vertical, 4)
+                
+                // 同步状态显示区域 - 待完善
+                // SyncStatusDisplayView(service: autoSyncService)
+            }
+        }
+        .padding(DesignTokens.Spacing.Page.cardPadding)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.controlBackgroundColor))
+        )
+        .alert("手动同步", isPresented: $showingManualSyncAlert) {
+            Button("确定") { }
+        } message: {
+            Text("同步已开始，您可以在同步状态区域查看进度。")
+        }
+    }
+    
+    // MARK: - Private Methods
+    
+    private func formatLastSyncTime(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+    
+    private func formatSyncTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+    
+    private func performManualSync() {
+        guard !isPerformingManualSync else { return }
+        
+        isPerformingManualSync = true
+        
+        Task {
+            do {
+                // 调用AppState的同步方法，这会处理AutoSyncService调用
+                await appState.performFullSync()
+                
+                await MainActor.run {
+                    isPerformingManualSync = false
+                    showingManualSyncAlert = true
+                }
+            } catch {
+                await MainActor.run {
+                    isPerformingManualSync = false
+                    // 错误已经在AppState中处理，这里不需要额外操作
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Sync Status Display View - 待完善
+
+/*
+struct SyncStatusDisplayView: View {
+    @ObservedObject var service: AutoSyncService
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("同步状态")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.primary)
+                
+                Spacer()
+                
+                SyncStatusIndicator(status: service.syncStatus)
+            }
+            
+            if service.isSyncing {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("进度：\(Int(service.syncProgress * 100))%")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                        
+                        Spacer()
+                        
+                        Text(service.syncStatus.displayName)
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    ProgressView(value: service.syncProgress)
+                        .progressViewStyle(LinearProgressViewStyle())
+                        .scaleEffect(x: 1, y: 0.5)
+                }
+            }
+            
+            if let lastSync = service.lastSyncTime {
+                Text("最后同步：\(formatRelativeTime(lastSync))")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            }
+            
+            if let error = service.lastSyncError {
+                Text("错误：\(error.errorDescription ?? "未知错误")")
+                    .font(.system(size: 12))
+                    .foregroundColor(.red)
+                    .lineLimit(2)
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(.quaternarySystemFill))
+        )
+    }
+    
+    private func formatRelativeTime(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+// MARK: - Sync Status Indicator
+
+struct SyncStatusIndicator: View {
+    let status: SyncStatus
+    
+    var body: some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(Color(red: status.color.red, green: status.color.green, blue: status.color.blue))
+                .frame(width: 8, height: 8)
+            
+            Text(status.displayName)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.secondary)
+        }
+    }
+}
+*/
+
+// MARK: - Advanced Settings Section
+
+struct AdvancedSettingsSection: View {
+    @EnvironmentObject private var userPreferences: UserPreferences
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            // 开发者选项
+            VStack(alignment: .leading, spacing: 16) {
+                Text("开发者选项")
+                    .font(DesignTokens.Typography.sectionTitle)
+                    .foregroundColor(.primary)
+                
+                VStack(spacing: 12) {
+                    ModernSettingRow(
+                        icon: "ladybug",
+                        title: "调试日志",
+                        description: "启用详细调试日志（重启后生效）",
+                        control: AnyView(
+                            Toggle("", isOn: $userPreferences.enableDebugLogging)
+                                .controlSize(.small)
+                        )
+                    )
+                }
+            }
+            .padding(DesignTokens.Spacing.Page.cardPadding)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(.controlBackgroundColor))
+            )
+            
+            // 数据管理
+            VStack(alignment: .leading, spacing: 16) {
+                Text("数据管理")
+                    .font(DesignTokens.Typography.sectionTitle)
+                    .foregroundColor(.primary)
+                
+                VStack(spacing: 12) {
+                    HStack(spacing: 16) {
+                        Image(systemName: "folder")
+                            .font(.system(size: DesignTokens.Typography.IconSize.medium, weight: .medium))
+                            .foregroundColor(.blue)
+                            .frame(width: DesignTokens.Size.Icon.large)
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("打开配置目录")
+                                .font(DesignTokens.Typography.body)
+                                .foregroundColor(.primary)
+                            
+                            Text("在 Finder 中显示应用配置文件夹")
+                                .font(DesignTokens.Typography.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                        
+                        Button("打开") {
+                            openConfigDirectory()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    .padding(.vertical, 4)
+                    
+                    HStack(spacing: 16) {
+                        Image(systemName: "trash")
+                            .font(.system(size: DesignTokens.Typography.IconSize.medium, weight: .medium))
+                            .foregroundColor(.red)
+                            .frame(width: DesignTokens.Size.Icon.large)
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("清除缓存")
+                                .font(DesignTokens.Typography.body)
+                                .foregroundColor(.primary)
+                            
+                            Text("清除所有缓存数据")
+                                .font(DesignTokens.Typography.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                        
+                        Button("清除") {
+                            clearCaches()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+            .padding(DesignTokens.Spacing.Page.cardPadding)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(.controlBackgroundColor))
+            )
+        }
+    }
+    
+    private func openConfigDirectory() {
+        let url = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude")
+        NSWorkspace.shared.open(url)
+    }
+    
+    private func clearCaches() {
+        // TODO: 实现缓存清理逻辑
+        print("清除缓存")
+    }
+}
+
+// MARK: - About Settings Section
+
+struct AboutSettingsSection: View {
+    @EnvironmentObject private var appState: AppState
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            // 应用信息
+            VStack(alignment: .leading, spacing: 16) {
+                Text("应用信息")
+                    .font(DesignTokens.Typography.sectionTitle)
+                    .foregroundColor(.primary)
+                
+                VStack(spacing: 12) {
+                    HStack(spacing: 16) {
+                        Image(nsImage: NSImage(named: "AppIcon") ?? NSImage())
+                            .resizable()
+                            .frame(width: 64, height: 64)
+                            .cornerRadius(12)
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("ClaudeBar")
+                                .font(.system(size: 24, weight: .bold))
+                                .foregroundColor(.primary)
+                            
+                            Text("版本 1.0.0")
+                                .font(.system(size: 16))
+                                .foregroundColor(.secondary)
+                            
+                            Text("Claude CLI 配置管理工具")
+                                .font(.system(size: 14))
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                    }
+                    .padding(.vertical, 8)
+                    
+                    HStack(spacing: 12) {
+                        Link(destination: URL(string: "https://github.com/yourusername/claudebar")!) {
+                            Label("GitHub", systemImage: "link")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        
+                        Link(destination: URL(string: "https://github.com/yourusername/claudebar/issues")!) {
+                            Label("反馈问题", systemImage: "exclamationmark.bubble")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+            }
+            .padding(DesignTokens.Spacing.Page.cardPadding)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(.controlBackgroundColor))
+            )
+            
+            // 致谢
+            VStack(alignment: .leading, spacing: 16) {
+                Text("致谢")
                     .font(DesignTokens.Typography.sectionTitle)
                     .foregroundColor(.primary)
                 
                 VStack(spacing: 8) {
-                    ModernLinkRow(
-                        icon: "book.fill",
-                        title: "使用文档",
-                        url: "https://docs.anthropic.com/claude/docs"
-                    )
-                    
-                    ModernLinkRow(
-                        icon: "chevron.left.forwardslash.chevron.right",
-                        title: "GitHub 仓库",
+                    AcknowledgmentRow(
+                        name: "Claude CLI",
+                        description: "Anthropic 官方命令行工具",
                         url: "https://github.com/anthropics/claude-cli"
                     )
                     
-                    ModernLinkRow(
-                        icon: "questionmark.circle.fill",
-                        title: "技术支持",
-                        url: "https://support.anthropic.com"
-                    )
-                    
-                    ModernLinkRow(
-                        icon: "shield.fill",
-                        title: "隐私政策",
-                        url: "https://www.anthropic.com/privacy"
+                    AcknowledgmentRow(
+                        name: "SwiftUI",
+                        description: "Apple 现代化用户界面框架",
+                        url: "https://developer.apple.com/swiftui/"
                     )
                 }
             }
@@ -1236,6 +838,8 @@ struct ModernAboutSection: View {
         }
     }
 }
+
+// MARK: - Modern Setting Row
 
 struct ModernSettingRow: View {
     let icon: String
@@ -1247,7 +851,7 @@ struct ModernSettingRow: View {
         HStack(spacing: 16) {
             Image(systemName: icon)
                 .font(.system(size: DesignTokens.Typography.IconSize.medium, weight: .medium))
-                .foregroundColor(.blue)
+                .foregroundColor(.accentColor)
                 .frame(width: DesignTokens.Size.Icon.large)
             
             VStack(alignment: .leading, spacing: 2) {
@@ -1258,7 +862,6 @@ struct ModernSettingRow: View {
                 Text(description)
                     .font(DesignTokens.Typography.caption)
                     .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
             
             Spacer()
@@ -1269,47 +872,34 @@ struct ModernSettingRow: View {
     }
 }
 
-struct ModernLinkRow: View {
-    let icon: String
-    let title: String
+// MARK: - Acknowledgment Row
+
+struct AcknowledgmentRow: View {
+    let name: String
+    let description: String
     let url: String
-    @State private var isHovered = false
     
     var body: some View {
-        Button(action: openURL) {
-            HStack(spacing: 12) {
-                Image(systemName: icon)
-                    .font(.system(size: DesignTokens.Typography.IconSize.medium, weight: .medium))
-                    .foregroundColor(.blue)
-                    .frame(width: DesignTokens.Size.Icon.medium)
-                
-                Text(title)
-                    .font(DesignTokens.Typography.body)
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                    .font(.system(size: 14, weight: .medium))
                     .foregroundColor(.primary)
                 
-                Spacer()
-                
-                Image(systemName: "arrow.up.right")
-                    .font(.system(size: DesignTokens.Typography.IconSize.small, weight: .medium))
-                    .foregroundColor(.blue)
+                Text(description)
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isHovered ? Color.blue.opacity(0.05) : Color.clear)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(isHovered ? Color.blue.opacity(0.2) : Color.clear, lineWidth: 1)
-                    )
-            )
-        }
-        .buttonStyle(PlainButtonStyle())
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                isHovered = hovering
+            
+            Spacer()
+            
+            Button("访问") {
+                openURL()
             }
+            .buttonStyle(.bordered)
+            .controlSize(.mini)
         }
+        .padding(.vertical, 4)
     }
     
     private func openURL() {
@@ -1319,7 +909,10 @@ struct ModernLinkRow: View {
     }
 }
 
+// MARK: - Preview
+
 #Preview {
-    SettingsView(isPresented: .constant(true))
+    SettingsView()
+        .environmentObject(UserPreferences())
         .environmentObject(AppState())
 }

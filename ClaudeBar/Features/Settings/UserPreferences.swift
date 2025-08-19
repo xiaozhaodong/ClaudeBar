@@ -8,6 +8,25 @@
 import SwiftUI
 import Foundation
 
+// 同步间隔选项枚举
+enum SyncInterval: Int, CaseIterable {
+    case fiveMinutes = 300      // 5分钟
+    case tenMinutes = 600       // 10分钟
+    case fifteenMinutes = 900   // 15分钟
+    case thirtyMinutes = 1800   // 30分钟
+    case oneHour = 3600         // 1小时
+    
+    var displayName: String {
+        switch self {
+        case .fiveMinutes: return "5分钟"
+        case .tenMinutes: return "10分钟"
+        case .fifteenMinutes: return "15分钟"
+        case .thirtyMinutes: return "30分钟"
+        case .oneHour: return "1小时"
+        }
+    }
+}
+
 class UserPreferences: ObservableObject {
     // 应用设置
     @Published var launchAtLogin: Bool {
@@ -66,6 +85,29 @@ class UserPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(menuBarIconStyle, forKey: "menuBarIconStyle") }
     }
     
+    // 自动同步设置
+    @Published var autoSyncEnabled: Bool {
+        didSet { UserDefaults.standard.set(autoSyncEnabled, forKey: "autoSyncEnabled") }
+    }
+    
+    @Published var syncInterval: Int {
+        didSet { UserDefaults.standard.set(syncInterval, forKey: "syncInterval") }
+    }
+    
+    @Published var lastFullSyncDate: Date? {
+        didSet { 
+            if let date = lastFullSyncDate {
+                UserDefaults.standard.set(date, forKey: "lastFullSyncDate")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "lastFullSyncDate")
+            }
+        }
+    }
+    
+    @Published var showSyncNotifications: Bool {
+        didSet { UserDefaults.standard.set(showSyncNotifications, forKey: "showSyncNotifications") }
+    }
+    
     // 开发者选项
     @Published var enableDebugLogging: Bool {
         didSet { UserDefaults.standard.set(enableDebugLogging, forKey: "enableDebugLogging") }
@@ -91,6 +133,11 @@ class UserPreferences: ObservableObject {
         self.fontSize = UserDefaults.standard.object(forKey: "fontSize") as? Double ?? 14.0
         self.menuBarIconStyle = UserDefaults.standard.string(forKey: "menuBarIconStyle") ?? "terminal"
         
+        self.autoSyncEnabled = UserDefaults.standard.bool(forKey: "autoSyncEnabled")
+        self.syncInterval = UserDefaults.standard.object(forKey: "syncInterval") as? Int ?? SyncInterval.fifteenMinutes.rawValue
+        self.lastFullSyncDate = UserDefaults.standard.object(forKey: "lastFullSyncDate") as? Date
+        self.showSyncNotifications = UserDefaults.standard.object(forKey: "showSyncNotifications") as? Bool ?? true
+        
         self.enableDebugLogging = UserDefaults.standard.bool(forKey: "enableDebugLogging")
     }
     
@@ -108,6 +155,22 @@ class UserPreferences: ObservableObject {
         accentColor = "blue"
         fontSize = 14.0
         menuBarIconStyle = "terminal"
+        autoSyncEnabled = false
+        syncInterval = SyncInterval.fifteenMinutes.rawValue
+        lastFullSyncDate = nil
+        showSyncNotifications = true
         enableDebugLogging = false
+    }
+    
+    // MARK: - 便利方法
+    
+    /// 获取当前同步间隔的枚举值
+    var currentSyncInterval: SyncInterval {
+        return SyncInterval(rawValue: syncInterval) ?? .fifteenMinutes
+    }
+    
+    /// 设置同步间隔
+    func setSyncInterval(_ interval: SyncInterval) {
+        syncInterval = interval.rawValue
     }
 }

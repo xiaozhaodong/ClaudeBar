@@ -166,6 +166,7 @@ class StreamingJSONLParser {
                 batch: &batch,
                 entries: &entries,
                 projectPath: projectPath,
+                sourceFile: fileURL.lastPathComponent,
                 startDate: startDate,
                 endDate: endDate,
                 validLines: &validLines,
@@ -181,6 +182,7 @@ class StreamingJSONLParser {
                 batch: &batch,
                 entries: &entries,
                 projectPath: projectPath,
+                sourceFile: fileURL.lastPathComponent,
                 startDate: startDate,
                 endDate: endDate,
                 validLines: &validLines,
@@ -208,6 +210,7 @@ class StreamingJSONLParser {
         batch: inout [UsageEntry],
         entries: inout [UsageEntry],
         projectPath: String,
+        sourceFile: String,
         startDate: Date?,
         endDate: Date?,
         validLines: inout Int,
@@ -232,6 +235,7 @@ class StreamingJSONLParser {
                 batch: &batch,
                 entries: &entries,
                 projectPath: projectPath,
+                sourceFile: sourceFile,
                 startDate: startDate,
                 endDate: endDate,
                 validLines: &validLines,
@@ -247,6 +251,7 @@ class StreamingJSONLParser {
         batch: inout [UsageEntry],
         entries: inout [UsageEntry],
         projectPath: String,
+        sourceFile: String,
         startDate: Date?,
         endDate: Date?,
         validLines: inout Int,
@@ -264,6 +269,7 @@ class StreamingJSONLParser {
             batch: &batch,
             entries: &entries,
             projectPath: projectPath,
+            sourceFile: sourceFile,
             startDate: startDate,
             endDate: endDate,
             validLines: &validLines,
@@ -278,6 +284,7 @@ class StreamingJSONLParser {
         batch: inout [UsageEntry],
         entries: inout [UsageEntry],
         projectPath: String,
+        sourceFile: String,
         startDate: Date?,
         endDate: Date?,
         validLines: inout Int,
@@ -296,7 +303,7 @@ class StreamingJSONLParser {
                 let rawEntry = try decoder.decode(RawJSONLEntry.self, from: jsonData)
                 
                 // 转换为标准使用记录
-                if let entry = rawEntry.toUsageEntry(projectPath: projectPath) {
+                if let entry = rawEntry.toUsageEntry(projectPath: projectPath, sourceFile: sourceFile) {
                     // 应用日期过滤 - 使用优化的日期检查
                     if isEntryInDateRange(entry, startDate: startDate, endDate: endDate) {
                         batch.append(entry)

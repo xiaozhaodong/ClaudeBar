@@ -1,6 +1,6 @@
 import Foundation
 
-/// 单条使用记录模型
+/// 单条使用记录模型（与测试文件完全一致）
 struct UsageEntry: Codable {
     let timestamp: String
     let model: String
@@ -11,12 +11,13 @@ struct UsageEntry: Codable {
     let cost: Double
     let sessionId: String
     let projectPath: String
+    let projectName: String  // 与测试文件一致：作为存储字段而不是计算属性
     let requestId: String?
-    let messageId: String?  // 添加 messageId 字段以支持 ccusage 风格的去重
+    let messageId: String?
     let messageType: String
-    
-    // 移除缓存字段，改用全局缓存策略
-    
+    let dateString: String   // 与测试文件一致：作为存储字段而不是计算属性
+    let sourceFile: String   // 与测试文件一致：必需字段而不是可选字段
+
     private enum CodingKeys: String, CodingKey {
         case timestamp
         case model
@@ -27,31 +28,17 @@ struct UsageEntry: Codable {
         case cost
         case sessionId = "session_id"
         case projectPath = "project_path"
+        case projectName = "project_name"  // 新增：项目名称字段的编码键
         case requestId = "request_id"
-        case messageId = "message_id"  // 添加 messageId 的编码键
+        case messageId = "message_id"
         case messageType = "message_type"
-        // _cachedDateString 不参与序列化
+        case dateString = "date_string"    // 新增：日期字符串字段的编码键
+        case sourceFile = "source_file"
     }
     
     /// 总令牌数
     var totalTokens: Int {
         return inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens
-    }
-    
-    /// 日期字符串（YYYY-MM-DD 格式，使用本地时区）
-    var dateString: String {
-        // 使用全局缓存和优化的日期格式化方式
-        return DateStringCache.shared.getDateString(for: timestamp)
-    }
-    
-    /// 项目名称（从路径中提取）
-    var projectName: String {
-        if projectPath.isEmpty {
-            return "未知项目"
-        }
-        
-        let components = projectPath.components(separatedBy: "/")
-        return components.last ?? projectPath
     }
     
     /// 检查是否在指定日期范围内
@@ -157,9 +144,8 @@ struct RawJSONLEntry: Codable {
         let id: String?  // 添加id字段以支持message.id提取（测试脚本第139行）
     }
     
-    /// 转换为标准的使用记录
-    /// 完全基于 ccusage 测试脚本验证成功的逻辑实现
-    func toUsageEntry(projectPath: String) -> UsageEntry? {
+    /// 转换为标准的使用记录（与测试文件完全一致）
+    func toUsageEntry(projectPath: String, sourceFile: String) -> UsageEntry? {
         // 获取消息类型 - 采用与ccusage更接近的策略
         let messageType = type ?? self.messageType ?? ""
         let usageData = usage ?? message?.usage
@@ -208,17 +194,30 @@ struct RawJSONLEntry: Codable {
         let cacheCreationTokens = usageData?.effectiveCacheCreationTokens ?? 0
         let cacheReadTokens = usageData?.effectiveCacheReadTokens ?? 0
         
-        // 计算成本（避免循环依赖，使用简单成本计算）
-        let calculatedCost = cost ?? costUSD ?? 0.0
+        // 成本计算：与测试脚本保持一致，使用PricingModel重新计算成本
+        let calculatedCost = PricingModel.shared.calculateCost(
+            model: modelName,
+            inputTokens: inputTokens,
+            outputTokens: outputTokens,
+            cacheCreationTokens: cacheCreationTokens,
+            cacheReadTokens: cacheReadTokens
+        )
         
         // 完全模拟ccusage的ID提取逻辑（测试脚本第137-140行）
         // 优先使用 requestId（无下划线），然后是 request_id（下划线），最后是 messageId
         let extractedRequestId = requestId ?? requestIdUnderscore ?? messageId
         let extractedMessageId = messageId ?? message?.id
         
-        // ccusage风格的时间戳处理（测试脚本第140行）
-        let finalTimestamp = timestamp ?? date ?? Date().toISOString()
-        
+        // 时间戳处理（与测试文件完全一致）
+        let finalTimestamp = timestamp ?? date ?? formatCurrentDateToISO()
+
+        // 项目名称提取（与测试文件完全一致）
+        let projectComponents = projectPath.components(separatedBy: "/")
+        let projectName = projectComponents.last ?? "未知项目"
+
+        // 日期字符串生成（使用项目的逻辑）
+        let dateString = formatDateLikeCcusage(from: finalTimestamp)
+
         return UsageEntry(
             timestamp: finalTimestamp,
             model: modelName,
@@ -229,10 +228,85 @@ struct RawJSONLEntry: Codable {
             cost: calculatedCost,
             sessionId: sessionId ?? "unknown",
             projectPath: projectPath,
+            projectName: projectName,
             requestId: extractedRequestId,
             messageId: extractedMessageId,
-            messageType: messageType
+            messageType: messageType,
+            dateString: dateString,
+            sourceFile: sourceFile
         )
+    }
+
+    /// 格式化当前日期为ISO字符串（与测试文件完全一致）
+    private func formatCurrentDateToISO() -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: Date())
+    }
+
+    /// 精确的日期格式化方法，支持多种时间戳格式（与测试文件完全一致）
+    private func formatDateLikeCcusage(from timestamp: String) -> String {
+        // 首先尝试 ISO8601 格式解析
+        let iso8601Formatter = ISO8601DateFormatter()
+        iso8601Formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
+        if let date = iso8601Formatter.date(from: timestamp) {
+            return formatDateToString(date)
+        }
+
+        // 尝试其他常见格式
+        let formatters = [
+            // ISO8601 无毫秒
+            { () -> DateFormatter in
+                let f = DateFormatter()
+                f.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZ"
+                f.locale = Locale(identifier: "en_US_POSIX")
+                return f
+            }(),
+            // RFC3339 格式
+            { () -> DateFormatter in
+                let f = DateFormatter()
+                f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSZ"
+                f.locale = Locale(identifier: "en_US_POSIX")
+                return f
+            }(),
+            // 简单的日期时间格式
+            { () -> DateFormatter in
+                let f = DateFormatter()
+                f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+                f.locale = Locale(identifier: "en_US_POSIX")
+                f.timeZone = TimeZone.current
+                return f
+            }()
+        ]
+
+        for formatter in formatters {
+            if let date = formatter.date(from: timestamp) {
+                return formatDateToString(date)
+            }
+        }
+
+        // 如果所有格式都失败，尝试使用 SQLite datetime 函数的安全方式
+        // 检查时间戳是否至少包含日期格式
+        if timestamp.count >= 10 && timestamp.contains("-") {
+            let dateComponent = String(timestamp.prefix(10))
+            // 验证日期格式 YYYY-MM-DD
+            if dateComponent.range(of: "^\\d{4}-\\d{2}-\\d{2}$", options: .regularExpression) != nil {
+                return dateComponent
+            }
+        }
+
+        // 最后的回退：返回当前日期（避免错误数据）
+        return formatDateToString(Date())
+    }
+
+    /// 将Date对象格式化为 YYYY-MM-DD 字符串（与测试文件完全一致）
+    private func formatDateToString(_ date: Date) -> String {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dateFormatter.timeZone = TimeZone.current
+        return dateFormatter.string(from: date)
     }
 }
 

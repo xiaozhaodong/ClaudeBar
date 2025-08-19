@@ -23,6 +23,10 @@
 		0B79A6142E43335300B7640C /* ConfigServiceCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B79A6112E43335300B7640C /* ConfigServiceCoordinator.swift */; };
 		0B79A6162E43335300B7640C /* ModernConfigService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B79A6132E43335300B7640C /* ModernConfigService.swift */; };
 		0B79A6182E4594D300B7640C /* CacheStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B79A6172E4594D300B7640C /* CacheStatus.swift */; };
+		0B8FE6402E518E3000AF3FB6 /* SyncNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B8FE63E2E518E3000AF3FB6 /* SyncNotifications.swift */; };
+		0B8FE6422E518E6300AF3FB6 /* SyncError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B8FE6412E518E6300AF3FB6 /* SyncError.swift */; };
+		0B8FE6442E518E7D00AF3FB6 /* AutoSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B8FE6432E518E7D00AF3FB6 /* AutoSyncService.swift */; };
+		0B8FE6462E518ED400AF3FB6 /* SyncStatusComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B8FE6452E518ED400AF3FB6 /* SyncStatusComponents.swift */; };
 		0BCFFED82E3C56B20038AC59 /* DesignTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BCFFED72E3C56B20038AC59 /* DesignTokens.swift */; };
 		0BCFFEDC2E3C630F0038AC59 /* PricingModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BCFFED92E3C630F0038AC59 /* PricingModel.swift */; };
 		0BCFFEDD2E3C630F0038AC59 /* UsageEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BCFFEDA2E3C630F0038AC59 /* UsageEntry.swift */; };
@@ -74,6 +78,10 @@
 		0B79A6112E43335300B7640C /* ConfigServiceCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigServiceCoordinator.swift; sourceTree = "<group>"; };
 		0B79A6132E43335300B7640C /* ModernConfigService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModernConfigService.swift; sourceTree = "<group>"; };
 		0B79A6172E4594D300B7640C /* CacheStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CacheStatus.swift; sourceTree = "<group>"; };
+		0B8FE63E2E518E3000AF3FB6 /* SyncNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncNotifications.swift; sourceTree = "<group>"; };
+		0B8FE6412E518E6300AF3FB6 /* SyncError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncError.swift; sourceTree = "<group>"; };
+		0B8FE6432E518E7D00AF3FB6 /* AutoSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoSyncService.swift; sourceTree = "<group>"; };
+		0B8FE6452E518ED400AF3FB6 /* SyncStatusComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncStatusComponents.swift; sourceTree = "<group>"; };
 		0BCFFED72E3C56B20038AC59 /* DesignTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignTokens.swift; sourceTree = "<group>"; };
 		0BCFFED92E3C630F0038AC59 /* PricingModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PricingModel.swift; sourceTree = "<group>"; };
 		0BCFFEDA2E3C630F0038AC59 /* UsageEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageEntry.swift; sourceTree = "<group>"; };
@@ -121,6 +129,14 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		0B8FE63F2E518E3000AF3FB6 /* Extensions */ = {
+			isa = PBXGroup;
+			children = (
+				0B8FE63E2E518E3000AF3FB6 /* SyncNotifications.swift */,
+			);
+			path = Extensions;
+			sourceTree = "<group>";
+		};
 		0BCFFEE02E3C63430038AC59 /* ViewModels */ = {
 			isa = PBXGroup;
 			children = (
@@ -154,6 +170,7 @@
 		9H3C2FEF9E3F65E4AE874D5A /* Components */ = {
 			isa = PBXGroup;
 			children = (
+				0B8FE6452E518ED400AF3FB6 /* SyncStatusComponents.swift */,
 				0B3B8F2C2E3CBB0A00C77B88 /* SkeletonLoader.swift */,
 				0B3B8F2D2E3CBB0A00C77B88 /* TimelineChart.swift */,
 				0B3B8F2E2E3CBB0A00C77B88 /* UsageTabViews.swift */,
@@ -206,6 +223,7 @@
 		A1234567890ABCDEF1234588 /* Core */ = {
 			isa = PBXGroup;
 			children = (
+				0B8FE63F2E518E3000AF3FB6 /* Extensions */,
 				0BCFFED72E3C56B20038AC59 /* DesignTokens.swift */,
 				A1234567890ABCDEF123458B /* Models */,
 				A1234567890ABCDEF123458C /* Services */,
@@ -241,6 +259,7 @@
 		A1234567890ABCDEF123458B /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				0B8FE6412E518E6300AF3FB6 /* SyncError.swift */,
 				0B79A6172E4594D300B7640C /* CacheStatus.swift */,
 				0BCFFED92E3C630F0038AC59 /* PricingModel.swift */,
 				0BCFFEDA2E3C630F0038AC59 /* UsageEntry.swift */,
@@ -253,6 +272,7 @@
 		A1234567890ABCDEF123458C /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				0B8FE6432E518E7D00AF3FB6 /* AutoSyncService.swift */,
 				0B12CB1B2E4C389F00961EF0 /* HybridUsageService.swift */,
 				0B12CB192E4B1B3D00961EF0 /* UsageStatisticsDatabase.swift */,
 				0B6C1CDB2E49D8FC00C074AC /* DatabaseManager.swift */,
@@ -361,6 +381,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A1234567890ABCDEF1234568 /* ContentView.swift in Sources */,
+				0B8FE6422E518E6300AF3FB6 /* SyncError.swift in Sources */,
 				A1234567890ABCDEF1234572 /* ConfigService.swift in Sources */,
 				A1234567890ABCDEF1234574 /* StatusItemManager.swift in Sources */,
 				A1234567890ABCDEF1234570 /* ClaudeConfig.swift in Sources */,
@@ -370,6 +391,7 @@
 				0B3B8F302E3CBB0A00C77B88 /* UsageTabViews.swift in Sources */,
 				0B79A6142E43335300B7640C /* ConfigServiceCoordinator.swift in Sources */,
 				0B6C1CDD2E49D8FC00C074AC /* SQLiteConfigService.swift in Sources */,
+				0B8FE6402E518E3000AF3FB6 /* SyncNotifications.swift in Sources */,
 				0B6C1CDE2E49D8FC00C074AC /* DatabaseManager.swift in Sources */,
 				0B79A6162E43335300B7640C /* ModernConfigService.swift in Sources */,
 				0B3B8F312E3CBB0A00C77B88 /* SkeletonLoader.swift in Sources */,
@@ -380,6 +402,7 @@
 				0B43D3DA2E3CFBE3007FC2B2 /* JSONLParserBenchmark.swift in Sources */,
 				A1234567890ABCDEF1234567 /* ClaudeBarApp.swift in Sources */,
 				0B3CE2A62E3B73B400BAEDF9 /* SupportingViews.swift in Sources */,
+				0B8FE6462E518ED400AF3FB6 /* SyncStatusComponents.swift in Sources */,
 				A1234567890ABCDEF123456E /* AppDelegate.swift in Sources */,
 				0B12CB1A2E4B1B3D00961EF0 /* UsageStatisticsDatabase.swift in Sources */,
 				A1234567890ABCDEF1234578 /* MenuBarViewModel.swift in Sources */,
@@ -403,6 +426,7 @@
 				0BCFFEDC2E3C630F0038AC59 /* PricingModel.swift in Sources */,
 				0BCFFEDD2E3C630F0038AC59 /* UsageEntry.swift in Sources */,
 				0BCFFEDE2E3C630F0038AC59 /* UsageStatistics.swift in Sources */,
+				0B8FE6442E518E7D00AF3FB6 /* AutoSyncService.swift in Sources */,
 				85954B879C704B208C7E074F /* UserPreferences.swift in Sources */,
 				0B3C33BCB8C8473ABCF9DF8F /* ConfigManagementComponents.swift in Sources */,
 				1CCDE055CF4B4819AC9AD335 /* ProcessMonitorComponents.swift in Sources */,

@@ -20,10 +20,14 @@ class AppState: ObservableObject {
     @Published var isLoadingUsage: Bool = false
     @Published var usageErrorMessage: String?
     
+    // 自动同步服务
+    @Published var autoSyncService: AutoSyncService
+    
     internal var configService: ConfigServiceProtocol
     private let processService: ProcessService
     private let usageService: UsageServiceProtocol
     private let usageStatisticsDB: UsageStatisticsDatabase  // 使用统计数据库
+    internal let userPreferences: UserPreferences
     private var cancellables = Set<AnyCancellable>()
     private var loadConfigsTask: Task<Void, Never>?
     private var successMessageTask: Task<Void, Never>?
@@ -42,13 +46,26 @@ class AppState: ObservableObject {
         print("使用统计数据库已初始化")
         
         // 使用混合服务：优先数据库，降级到JSONL
-        self.usageService = HybridUsageService(database: self.usageStatisticsDB, configService: self.configService)
+        let hybridUsageService = HybridUsageService(database: self.usageStatisticsDB, configService: self.configService)
+        self.usageService = hybridUsageService
+        
+        // 初始化用户偏好设置
+        self.userPreferences = UserPreferences()
+        
+        // 初始化自动同步服务
+        self.autoSyncService = AutoSyncService(
+            usageService: hybridUsageService,
+            userPreferences: userPreferences
+        )
         
         // 监听进程状态变化
         processService.$processStatus
             .receive(on: DispatchQueue.main)
             .assign(to: \.claudeProcessStatus, on: self)
             .store(in: &cancellables)
+            
+        // 配置自动同步服务的初始状态
+        configureAutoSyncService()
             
         // 启动时检查和执行迁移
         Task {
@@ -59,6 +76,28 @@ class AppState: ObservableObject {
         Task {
             await loadUsageStatisticsInBackground()
         }
+    }
+    
+    /// 配置自动同步服务
+    /// 设置自动同步服务的初始状态和依赖关系
+    private func configureAutoSyncService() {
+        // 延迟启动自动同步，避免初始化时的主线程阻塞
+        if userPreferences.autoSyncEnabled {
+            // 使用 1 秒延迟，让应用完全启动后再开始同步
+            Task {
+                do {
+                    // 延迟启动以避免初始化时的阻塞
+                    try await Task.sleep(nanoseconds: 1_000_000_000) // 1 秒
+                    try await autoSyncService.startAutoSync()
+                    print("✅ 自动同步服务已启动")
+                } catch {
+                    print("⚠️ 自动同步服务启动失败: \(error)")
+                }
+            }
+        }
+        
+        // 监听自动同步设置变化，已经在AutoSyncService内部处理
+        // 这里不需要额外的监听逻辑
     }
     
     /// 检查并请求 ~/.claude 目录访问权限（已简化）
@@ -342,6 +381,11 @@ class AppState: ObservableObject {
         successMessageTask?.cancel()
         loadUsageTask?.cancel()
         cancellables.removeAll()
+        
+        // 停止自动同步服务
+        Task {
+            await autoSyncService.stopAutoSync()
+        }
     }
     
     // MARK: - 使用统计相关方法
@@ -407,4 +451,41 @@ class AppState: ObservableObject {
         }
     }
     
+    // MARK: - 自动同步服务访问方法
+    
+    /// 手动触发完整同步
+    /// 通过AppState提供统一的同步接口
+    func performFullSync() async {
+        do {
+            let result = try await autoSyncService.performFullSync()
+            Logger.shared.info("AppState: 完整同步完成，处理了 \(result.processedItems) 项")
+            
+            // 同步完成后刷新使用统计
+            await refreshUsageStatistics()
+        } catch {
+            Logger.shared.error("AppState: 完整同步失败: \(error)")
+            showErrorMessage("完整同步失败: \(error.localizedDescription)")
+        }
+    }
+    
+    /// 手动触发增量同步
+    /// 通过AppState提供统一的同步接口
+    func performIncrementalSync() async {
+        do {
+            let result = try await autoSyncService.performIncrementalSync()
+            Logger.shared.info("AppState: 增量同步完成，处理了 \(result.processedItems) 项")
+            
+            // 同步完成后刷新使用统计
+            await refreshUsageStatistics()
+        } catch {
+            Logger.shared.error("AppState: 增量同步失败: \(error)")
+            showErrorMessage("增量同步失败: \(error.localizedDescription)")
+        }
+    }
+    
+    /// 取消当前同步操作
+    func cancelSync() async {
+        await autoSyncService.cancelSync()
+        Logger.shared.info("AppState: 同步操作已取消")
+    }
 }

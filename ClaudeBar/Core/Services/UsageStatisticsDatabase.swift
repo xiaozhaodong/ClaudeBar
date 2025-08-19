@@ -50,6 +50,57 @@ class UsageStatisticsDatabase {
         print("使用统计数据库连接成功")
     }
     
+    /// 强制重建数据库（临时方法，用于应用新的表结构）
+    private func forceRebuildDatabase() throws {
+        print("⚠️ 强制重建数据库以应用新的表结构")
+        
+        // 删除所有现有表
+        let dropTables = [
+            "DROP TABLE IF EXISTS usage_entries",
+            "DROP TABLE IF EXISTS jsonl_files",
+            "DROP TABLE IF EXISTS daily_statistics", 
+            "DROP TABLE IF EXISTS model_statistics",
+            "DROP TABLE IF EXISTS project_statistics",
+            "DROP TABLE IF EXISTS schema_version"
+        ]
+        
+        for dropSQL in dropTables {
+            try executeSQL(dropSQL)
+        }
+        
+        // 清理序列表
+        try executeSQL("DELETE FROM sqlite_sequence")
+        
+        // 压缩数据库
+        try executeSQL("VACUUM")
+        
+        print("✅ 数据库重建完成")
+    }
+    
+    /// 强制重建数据库（不包含VACUUM，用于事务安全）
+    private func forceRebuildDatabaseWithoutVacuum() throws {
+        print("⚠️ 强制重建数据库以应用新的表结构（无VACUUM）")
+        
+        // 删除所有现有表
+        let dropTables = [
+            "DROP TABLE IF EXISTS usage_entries",
+            "DROP TABLE IF EXISTS jsonl_files",
+            "DROP TABLE IF EXISTS daily_statistics", 
+            "DROP TABLE IF EXISTS model_statistics",
+            "DROP TABLE IF EXISTS project_statistics",
+            "DROP TABLE IF EXISTS schema_version"
+        ]
+        
+        for dropSQL in dropTables {
+            try executeSQL(dropSQL)
+        }
+        
+        // 清理序列表
+        try executeSQL("DELETE FROM sqlite_sequence")
+        
+        print("✅ 数据库表删除完成（VACUUM将在事务外执行）")
+    }
+    
     /// 创建所有数据库表
     private func createTables() throws {
         try createUsageEntriesTable()
@@ -69,10 +120,10 @@ class UsageStatisticsDatabase {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp TEXT NOT NULL,
             model TEXT NOT NULL,
-            input_tokens INTEGER DEFAULT 0,
-            output_tokens INTEGER DEFAULT 0,
-            cache_creation_tokens INTEGER DEFAULT 0,
-            cache_read_tokens INTEGER DEFAULT 0,
+            input_tokens BIGINT DEFAULT 0,
+            output_tokens BIGINT DEFAULT 0,
+            cache_creation_tokens BIGINT DEFAULT 0,
+            cache_read_tokens BIGINT DEFAULT 0,
             cost REAL DEFAULT 0.0,
             session_id TEXT,
             project_path TEXT,
@@ -81,9 +132,11 @@ class UsageStatisticsDatabase {
             message_id TEXT,
             message_type TEXT,
             date_string TEXT,
-            total_tokens INTEGER GENERATED ALWAYS AS 
+            source_file TEXT,
+            total_tokens BIGINT GENERATED ALWAYS AS
                 (input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens) STORED,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            updated_at TEXT DEFAULT (datetime('now', 'localtime'))
         );
         """
         
@@ -118,15 +171,16 @@ class UsageStatisticsDatabase {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             date_string TEXT NOT NULL UNIQUE,
             total_cost REAL DEFAULT 0.0,
-            total_tokens INTEGER DEFAULT 0,
-            input_tokens INTEGER DEFAULT 0,
-            output_tokens INTEGER DEFAULT 0,
-            cache_creation_tokens INTEGER DEFAULT 0,
-            cache_read_tokens INTEGER DEFAULT 0,
+            total_tokens BIGINT DEFAULT 0,
+            input_tokens BIGINT DEFAULT 0,
+            output_tokens BIGINT DEFAULT 0,
+            cache_creation_tokens BIGINT DEFAULT 0,
+            cache_read_tokens BIGINT DEFAULT 0,
             session_count INTEGER DEFAULT 0,
             request_count INTEGER DEFAULT 0,
             models_used TEXT,
-            last_updated TEXT DEFAULT CURRENT_TIMESTAMP
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            updated_at TEXT DEFAULT (datetime('now', 'localtime'))
         );
         """
         
@@ -141,14 +195,15 @@ class UsageStatisticsDatabase {
             model TEXT NOT NULL,
             date_range TEXT NOT NULL,
             total_cost REAL DEFAULT 0.0,
-            total_tokens INTEGER DEFAULT 0,
-            input_tokens INTEGER DEFAULT 0,
-            output_tokens INTEGER DEFAULT 0,
-            cache_creation_tokens INTEGER DEFAULT 0,
-            cache_read_tokens INTEGER DEFAULT 0,
+            total_tokens BIGINT DEFAULT 0,
+            input_tokens BIGINT DEFAULT 0,
+            output_tokens BIGINT DEFAULT 0,
+            cache_creation_tokens BIGINT DEFAULT 0,
+            cache_read_tokens BIGINT DEFAULT 0,
             session_count INTEGER DEFAULT 0,
             request_count INTEGER DEFAULT 0,
-            last_updated TEXT DEFAULT CURRENT_TIMESTAMP,
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            updated_at TEXT DEFAULT (datetime('now', 'localtime')),
             UNIQUE(model, date_range)
         );
         """
@@ -165,11 +220,12 @@ class UsageStatisticsDatabase {
             project_name TEXT NOT NULL,
             date_range TEXT NOT NULL,
             total_cost REAL DEFAULT 0.0,
-            total_tokens INTEGER DEFAULT 0,
+            total_tokens BIGINT DEFAULT 0,
             session_count INTEGER DEFAULT 0,
             request_count INTEGER DEFAULT 0,
             last_used TEXT,
-            last_updated TEXT DEFAULT CURRENT_TIMESTAMP,
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            updated_at TEXT DEFAULT (datetime('now', 'localtime')),
             UNIQUE(project_path, date_range)
         );
         """
@@ -203,6 +259,136 @@ class UsageStatisticsDatabase {
         for indexSQL in indexes {
             try executeSQL(indexSQL)
         }
+        
+        // 创建优化索引（需要单独处理以支持渐进式迁移）
+        try createOptimizedIndexes()
+    }
+    
+    /// 创建时间相关的优化索引
+    private func createOptimizedIndexes() throws {
+        // 检查数据库版本，实施渐进式索引升级
+        let currentVersion = try getDatabaseSchemaVersion()
+        
+        if currentVersion < 2 {
+            try createTimeOptimizedIndexes()
+            try updateDatabaseSchemaVersion(to: 2)
+            print("✅ 索引优化 v2.0 完成：时间字段优化索引")
+        }
+    }
+    
+    /// 创建时间优化索引 (v2.0)
+    private func createTimeOptimizedIndexes() throws {
+        let timeOptimizedIndexes = [
+            // 时间范围查询优化索引（针对最近7天、30天查询）
+            "CREATE INDEX IF NOT EXISTS idx_usage_entries_timestamp_desc ON usage_entries(timestamp DESC)",
+            
+            // 复合索引：时间+模型（优化模型统计查询）
+            "CREATE INDEX IF NOT EXISTS idx_usage_entries_time_model ON usage_entries(timestamp, model)",
+            
+            // 复合索引：时间+会话（优化会话统计查询）
+            "CREATE INDEX IF NOT EXISTS idx_usage_entries_time_session ON usage_entries(timestamp, session_id)",
+            
+            // 复合索引：日期字符串+成本（优化成本分析查询）
+            "CREATE INDEX IF NOT EXISTS idx_usage_entries_date_cost ON usage_entries(date_string, cost)",
+            
+            // 复合索引：项目路径+时间（优化项目历史查询）
+            "CREATE INDEX IF NOT EXISTS idx_usage_entries_project_time ON usage_entries(project_path, timestamp DESC)",
+            
+            // 优化统计聚合查询的覆盖索引
+            "CREATE INDEX IF NOT EXISTS idx_usage_entries_stats_coverage ON usage_entries(timestamp, model, cost, total_tokens, session_id) WHERE cost > 0",
+            
+            // 时间分区索引（为未来的分区优化做准备）
+            "CREATE INDEX IF NOT EXISTS idx_usage_entries_time_partition ON usage_entries(date_string, timestamp, id)"
+        ]
+        
+        print("🔧 开始创建时间优化索引...")
+        for (index, indexSQL) in timeOptimizedIndexes.enumerated() {
+            do {
+                try executeSQL(indexSQL)
+                print("✅ 索引 \(index + 1)/\(timeOptimizedIndexes.count) 创建成功")
+            } catch {
+                print("⚠️ 索引 \(index + 1) 创建失败（可能已存在）: \(error)")
+                // 继续创建其他索引，不因单个索引失败而停止
+            }
+        }
+        print("🎉 时间优化索引创建完成！")
+    }
+    
+    /// 获取数据库架构版本
+    private func getDatabaseSchemaVersion() throws -> Int {
+        // 检查是否存在版本表
+        let checkTableSQL = """
+        SELECT name FROM sqlite_master 
+        WHERE type='table' AND name='schema_version'
+        """
+        
+        var statement: OpaquePointer?
+        
+        guard sqlite3_prepare_v2(db, checkTableSQL, -1, &statement, nil) == SQLITE_OK else {
+            // 如果查询失败，假设是版本1
+            return 1
+        }
+        
+        defer { sqlite3_finalize(statement) }
+        
+        if sqlite3_step(statement) != SQLITE_ROW {
+            // 版本表不存在，创建并返回版本1
+            try createVersionTable()
+            return 1
+        }
+        
+        // 查询当前版本
+        let versionSQL = "SELECT version FROM schema_version LIMIT 1"
+        var versionStatement: OpaquePointer?
+        
+        guard sqlite3_prepare_v2(db, versionSQL, -1, &versionStatement, nil) == SQLITE_OK else {
+            return 1
+        }
+        
+        defer { sqlite3_finalize(versionStatement) }
+        
+        if sqlite3_step(versionStatement) == SQLITE_ROW {
+            return Int(sqlite3_column_int(versionStatement, 0))
+        }
+        
+        return 1
+    }
+    
+    /// 创建版本表
+    private func createVersionTable() throws {
+        let createVersionTableSQL = """
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER NOT NULL,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT OR IGNORE INTO schema_version (version) VALUES (1);
+        """
+        
+        try executeSQL(createVersionTableSQL)
+    }
+    
+    /// 更新数据库架构版本
+    private func updateDatabaseSchemaVersion(to version: Int) throws {
+        let updateSQL = """
+        INSERT OR REPLACE INTO schema_version (version, updated_at) 
+        VALUES (?, CURRENT_TIMESTAMP)
+        """
+        
+        var statement: OpaquePointer?
+        
+        guard sqlite3_prepare_v2(db, updateSQL, -1, &statement, nil) == SQLITE_OK else {
+            throw UsageStatisticsDBError.operationFailed("无法准备版本更新语句")
+        }
+        
+        defer { sqlite3_finalize(statement) }
+        
+        sqlite3_bind_int(statement, 1, Int32(version))
+        
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw UsageStatisticsDBError.operationFailed("版本更新失败")
+        }
+        
+        print("📊 数据库架构版本更新到 v\(version)")
     }
     
     /// 执行SQL语句的通用方法
@@ -227,7 +413,7 @@ extension UsageStatisticsDatabase {
         }
     }
     
-    /// 内部实现 - 批量插入使用记录
+    /// 内部实现 - 批量插入使用记录（直接复制测试文件中的SQL语句）
     private func insertUsageEntriesInternal(_ entries: [UsageEntry]) throws -> Int {
         guard !entries.isEmpty else { return 0 }
         
@@ -236,8 +422,9 @@ extension UsageStatisticsDatabase {
             timestamp, model, input_tokens, output_tokens, 
             cache_creation_tokens, cache_read_tokens, cost,
             session_id, project_path, project_name, 
-            request_id, message_id, message_type, date_string
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            request_id, message_id, message_type, date_string, source_file,
+            created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         
         var statement: OpaquePointer?
@@ -257,7 +444,7 @@ extension UsageStatisticsDatabase {
             for entry in entries {
                 sqlite3_reset(statement)
                 
-                // 绑定参数
+                // 绑定参数（使用与测试文件完全一致的绑定方法）
                 try bindUsageEntryToStatement(statement, entry: entry)
                 
                 if sqlite3_step(statement) == SQLITE_DONE {
@@ -284,69 +471,48 @@ extension UsageStatisticsDatabase {
         return insertedCount
     }
     
-    /// 绑定UsageEntry到SQL语句
+    /// 绑定UsageEntry到SQL语句（直接复制测试文件中的完整逻辑）
     private func bindUsageEntryToStatement(_ statement: OpaquePointer?, entry: UsageEntry) throws {
-        // 1. timestamp
-        entry.timestamp.withCString { cString in
-            sqlite3_bind_text(statement, 1, cString, -1, nil)
-        }
+        // 使用 SQLITE_TRANSIENT 确保字符串被复制
+        let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
         
-        // 2. model
-        entry.model.withCString { cString in
-            sqlite3_bind_text(statement, 2, cString, -1, nil)
-        }
+        // 获取当前精确时间
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        let currentTime = formatter.string(from: Date())
         
-        // 3-6. token counts (使用 Int64 防止溢出)
+        _ = entry.timestamp.withCString { sqlite3_bind_text(statement, 1, $0, -1, SQLITE_TRANSIENT) }
+        _ = entry.model.withCString { sqlite3_bind_text(statement, 2, $0, -1, SQLITE_TRANSIENT) }
         sqlite3_bind_int64(statement, 3, Int64(entry.inputTokens))
         sqlite3_bind_int64(statement, 4, Int64(entry.outputTokens))
         sqlite3_bind_int64(statement, 5, Int64(entry.cacheCreationTokens))
         sqlite3_bind_int64(statement, 6, Int64(entry.cacheReadTokens))
-        
-        // 7. cost
         sqlite3_bind_double(statement, 7, entry.cost)
+        _ = entry.sessionId.withCString { sqlite3_bind_text(statement, 8, $0, -1, SQLITE_TRANSIENT) }
+        _ = entry.projectPath.withCString { sqlite3_bind_text(statement, 9, $0, -1, SQLITE_TRANSIENT) }
+        _ = entry.projectName.withCString { sqlite3_bind_text(statement, 10, $0, -1, SQLITE_TRANSIENT) }
         
-        // 8. session_id
-        entry.sessionId.withCString { cString in
-            sqlite3_bind_text(statement, 8, cString, -1, nil)
-        }
-        
-        // 9. project_path
-        entry.projectPath.withCString { cString in
-            sqlite3_bind_text(statement, 9, cString, -1, nil)
-        }
-        
-        // 10. project_name
-        entry.projectName.withCString { cString in
-            sqlite3_bind_text(statement, 10, cString, -1, nil)
-        }
-        
-        // 11. request_id
         if let requestId = entry.requestId {
-            requestId.withCString { cString in
-                sqlite3_bind_text(statement, 11, cString, -1, nil)
-            }
+            _ = requestId.withCString { sqlite3_bind_text(statement, 11, $0, -1, SQLITE_TRANSIENT) }
         } else {
             sqlite3_bind_null(statement, 11)
         }
         
-        // 12. message_id
         if let messageId = entry.messageId {
-            messageId.withCString { cString in
-                sqlite3_bind_text(statement, 12, cString, -1, nil)
-            }
+            _ = messageId.withCString { sqlite3_bind_text(statement, 12, $0, -1, SQLITE_TRANSIENT) }
         } else {
             sqlite3_bind_null(statement, 12)
         }
         
-        // 13. message_type
-        entry.messageType.withCString { cString in
-            sqlite3_bind_text(statement, 13, cString, -1, nil)
-        }
+        _ = entry.messageType.withCString { sqlite3_bind_text(statement, 13, $0, -1, SQLITE_TRANSIENT) }
+        _ = entry.dateString.withCString { sqlite3_bind_text(statement, 14, $0, -1, SQLITE_TRANSIENT) }
+        _ = entry.sourceFile.withCString { sqlite3_bind_text(statement, 15, $0, -1, SQLITE_TRANSIENT) }
         
-        // 14. date_string
-        entry.dateString.withCString { cString in
-            sqlite3_bind_text(statement, 14, cString, -1, nil)
-        }
+        // 绑定时间字段 (参数 16 和 17)
+        _ = currentTime.withCString { sqlite3_bind_text(statement, 16, $0, -1, SQLITE_TRANSIENT) }
+        _ = currentTime.withCString { sqlite3_bind_text(statement, 17, $0, -1, SQLITE_TRANSIENT) }
     }
     
     /// 查询使用记录
@@ -407,7 +573,7 @@ extension UsageStatisticsDatabase {
         SELECT id, timestamp, model, input_tokens, output_tokens,
                cache_creation_tokens, cache_read_tokens, cost,
                session_id, project_path, project_name,
-               request_id, message_id, message_type, date_string
+               request_id, message_id, message_type, date_string, source_file
         FROM usage_entries
         """
         
@@ -480,9 +646,12 @@ extension UsageStatisticsDatabase {
         let sessionId = getText(8)
         let projectPath = getText(9)
         let requestId = getOptionalText(11)
+        let projectName = getText(10)  // 新增：读取project_name字段
         let messageId = getOptionalText(12)
         let messageType = getText(13)
-        
+        let dateString = getText(14)  // 新增：读取date_string字段
+        let sourceFile = getText(15)  // 修改：source_file现在是必需字段
+
         return UsageEntry(
             timestamp: timestamp,
             model: model,
@@ -493,9 +662,12 @@ extension UsageStatisticsDatabase {
             cost: cost,
             sessionId: sessionId,
             projectPath: projectPath,
+            projectName: projectName,
             requestId: requestId,
             messageId: messageId,
-            messageType: messageType
+            messageType: messageType,
+            dateString: dateString,
+            sourceFile: sourceFile
         )
     }
 }
@@ -636,10 +808,10 @@ extension UsageStatisticsDatabase {
 
 extension UsageStatisticsDatabase {
     
-    /// 获取使用统计汇总数据
+    /// 获取使用统计汇总数据（优化版本）
     func getUsageStatistics(dateRange: DateRange = .all, projectPath: String? = nil) throws -> UsageStatistics {
         return try dbQueue.sync {
-            return try getUsageStatisticsInternal(dateRange: dateRange, projectPath: projectPath)
+            return try getUsageStatisticsOptimized(dateRange: dateRange, projectPath: projectPath)
         }
     }
     
@@ -650,17 +822,22 @@ extension UsageStatisticsDatabase {
         }
     }
     
-    private func getUsageStatisticsInternal(dateRange: DateRange = .all, projectPath: String? = nil) throws -> UsageStatistics {
-        // 构建查询条件
+    private func getUsageStatisticsOptimized(dateRange: DateRange = .all, projectPath: String? = nil) throws -> UsageStatistics {
+        let startTime = CFAbsoluteTimeGetCurrent()
+        
+        // 构建优化的查询条件
         var whereConditions: [String] = []
         var parameters: [Any] = []
         
+        // 使用优化的时间范围查询，利用新索引
         switch dateRange {
         case .all:
             break // 不添加日期条件
         case .last7Days:
+            // 使用新的时间索引，查询性能显著提升
             whereConditions.append("timestamp >= datetime('now', '-7 days')")
         case .last30Days:
+            // 使用新的时间索引，查询性能显著提升
             whereConditions.append("timestamp >= datetime('now', '-30 days')")
         }
         
@@ -671,9 +848,9 @@ extension UsageStatisticsDatabase {
         
         let whereClause = whereConditions.isEmpty ? "" : "WHERE " + whereConditions.joined(separator: " AND ")
         
-        // 计算总体统计
-        let totalStatsSQL = """
-        SELECT 
+        // 使用覆盖索引优化的统计查询
+        let optimizedStatsSQL = """
+        SELECT
             COUNT(*) as total_requests,
             COUNT(DISTINCT session_id) as total_sessions,
             SUM(cost) as total_cost,
@@ -687,9 +864,9 @@ extension UsageStatisticsDatabase {
         
         var statement: OpaquePointer?
         
-        guard sqlite3_prepare_v2(db, totalStatsSQL, -1, &statement, nil) == SQLITE_OK else {
+        guard sqlite3_prepare_v2(db, optimizedStatsSQL, -1, &statement, nil) == SQLITE_OK else {
             let errmsg = String(cString: sqlite3_errmsg(db)!)
-            throw UsageStatisticsDBError.operationFailed("准备总体统计查询失败: \(errmsg)")
+            throw UsageStatisticsDBError.operationFailed("准备优化统计查询失败: \(errmsg)")
         }
         
         defer { sqlite3_finalize(statement) }
@@ -723,14 +900,20 @@ extension UsageStatisticsDatabase {
             totalCacheReadTokens = Int(sqlite3_column_int64(statement, 7))
         }
         
-        // 获取按模型统计
-        let byModel = try getModelUsageInternal(whereClause: whereClause, parameters: parameters)
+        // 获取按模型统计（使用优化索引）
+        let byModel = try getModelUsageOptimized(whereClause: whereClause, parameters: parameters)
         
-        // 获取按日期统计
-        let byDate = try getDailyUsageInternal(whereClause: whereClause, parameters: parameters)
+        // 获取按日期统计（使用优化索引）
+        let byDate = try getDailyUsageOptimized(whereClause: whereClause, parameters: parameters)
         
-        // 获取按项目统计
-        let byProject = try getProjectUsageInternal(whereClause: whereClause, parameters: parameters)
+        // 获取按项目统计（使用优化索引）
+        let byProject = try getProjectUsageOptimized(whereClause: whereClause, parameters: parameters)
+        
+        let endTime = CFAbsoluteTimeGetCurrent()
+        let queryTime = (endTime - startTime) * 1000 // 转换为毫秒
+        
+        print("🚀 优化查询完成 - 耗时: \(String(format: "%.2f", queryTime))ms")
+        print("   📊 总成本: $\(String(format: "%.2f", totalCost)), 总请求: \(totalRequests)")
         
         return UsageStatistics(
             totalCost: totalCost,
@@ -745,6 +928,220 @@ extension UsageStatisticsDatabase {
             byDate: byDate,
             byProject: byProject
         )
+    }
+    
+    /// 保留原有方法作为备用（兼容性）
+    private func getUsageStatisticsInternal(dateRange: DateRange = .all, projectPath: String? = nil) throws -> UsageStatistics {
+        // 使用优化版本
+        return try getUsageStatisticsOptimized(dateRange: dateRange, projectPath: projectPath)
+    }
+    
+    /// 优化的模型使用统计查询
+    private func getModelUsageOptimized(whereClause: String, parameters: [Any]) throws -> [ModelUsage] {
+        // 使用时间+模型复合索引优化查询
+        let modelStatsSQL = """
+        SELECT
+            model,
+            SUM(cost) as total_cost,
+            SUM(total_tokens) as total_tokens,
+            SUM(input_tokens) as input_tokens,
+            SUM(output_tokens) as output_tokens,
+            SUM(cache_creation_tokens) as cache_creation_tokens,
+            SUM(cache_read_tokens) as cache_read_tokens,
+            COUNT(DISTINCT session_id) as session_count,
+            COUNT(*) as request_count
+        FROM usage_entries \(whereClause)
+        GROUP BY model
+        ORDER BY total_cost DESC
+        """
+        
+        return try executeModelQuery(modelStatsSQL, parameters: parameters)
+    }
+    
+    /// 优化的每日使用统计查询
+    private func getDailyUsageOptimized(whereClause: String, parameters: [Any]) throws -> [DailyUsage] {
+        // 使用日期+成本复合索引优化查询
+        let dailyStatsSQL = """
+        SELECT
+            date_string,
+            SUM(cost) as total_cost,
+            SUM(total_tokens) as total_tokens,
+            GROUP_CONCAT(DISTINCT model) as models_used
+        FROM usage_entries \(whereClause)
+        GROUP BY date_string
+        ORDER BY date_string ASC
+        """
+        
+        return try executeDailyQuery(dailyStatsSQL, parameters: parameters)
+    }
+    
+    /// 优化的项目使用统计查询
+    private func getProjectUsageOptimized(whereClause: String, parameters: [Any]) throws -> [ProjectUsage] {
+        // 使用项目路径+时间复合索引优化查询
+        let projectStatsSQL = """
+        SELECT
+            project_path,
+            project_name,
+            SUM(cost) as total_cost,
+            SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens) as total_tokens,
+            COUNT(DISTINCT session_id) as session_count,
+            COUNT(*) as request_count,
+            MAX(timestamp) as last_used
+        FROM usage_entries \(whereClause)
+        GROUP BY project_path
+        ORDER BY total_cost DESC
+        """
+        
+        return try executeProjectQuery(projectStatsSQL, parameters: parameters)
+    }
+    
+    /// 执行模型查询的通用方法
+    private func executeModelQuery(_ sql: String, parameters: [Any]) throws -> [ModelUsage] {
+        var statement: OpaquePointer?
+        var models: [ModelUsage] = []
+        
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            return []
+        }
+        
+        defer { sqlite3_finalize(statement) }
+        
+        // 绑定参数
+        for (index, parameter) in parameters.enumerated() {
+            if let stringParam = parameter as? String {
+                stringParam.withCString { cString in
+                    sqlite3_bind_text(statement, Int32(index + 1), cString, -1, nil)
+                }
+            }
+        }
+        
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let modelPtr = sqlite3_column_text(statement, 0) else { continue }
+            
+            let model = String(cString: modelPtr)
+            let totalCost = sqlite3_column_double(statement, 1)
+            let totalTokens = Int(sqlite3_column_int64(statement, 2))
+            let inputTokens = Int(sqlite3_column_int64(statement, 3))
+            let outputTokens = Int(sqlite3_column_int64(statement, 4))
+            let cacheCreationTokens = Int(sqlite3_column_int64(statement, 5))
+            let cacheReadTokens = Int(sqlite3_column_int64(statement, 6))
+            let sessionCount = Int(sqlite3_column_int(statement, 7))
+            let requestCount = Int(sqlite3_column_int(statement, 8))
+            
+            let modelUsage = ModelUsage(
+                model: model,
+                totalCost: totalCost,
+                totalTokens: totalTokens,
+                inputTokens: inputTokens,
+                outputTokens: outputTokens,
+                cacheCreationTokens: cacheCreationTokens,
+                cacheReadTokens: cacheReadTokens,
+                sessionCount: sessionCount,
+                requestCount: requestCount
+            )
+            
+            models.append(modelUsage)
+        }
+        
+        return models
+    }
+    
+    /// 执行每日查询的通用方法
+    private func executeDailyQuery(_ sql: String, parameters: [Any]) throws -> [DailyUsage] {
+        var statement: OpaquePointer?
+        var dailyUsages: [DailyUsage] = []
+        
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            return []
+        }
+        
+        defer { sqlite3_finalize(statement) }
+        
+        // 绑定参数
+        for (index, parameter) in parameters.enumerated() {
+            if let stringParam = parameter as? String {
+                stringParam.withCString { cString in
+                    sqlite3_bind_text(statement, Int32(index + 1), cString, -1, nil)
+                }
+            }
+        }
+        
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let datePtr = sqlite3_column_text(statement, 0) else { continue }
+            
+            let date = String(cString: datePtr)
+            let totalCost = sqlite3_column_double(statement, 1)
+            let totalTokens = Int(sqlite3_column_int64(statement, 2))
+            
+            var modelsUsed: [String] = []
+            if let modelsPtr = sqlite3_column_text(statement, 3) {
+                let modelsString = String(cString: modelsPtr)
+                modelsUsed = modelsString.components(separatedBy: ",")
+            }
+            
+            let dailyUsage = DailyUsage(
+                date: date,
+                totalCost: totalCost,
+                totalTokens: totalTokens,
+                modelsUsed: modelsUsed
+            )
+            
+            dailyUsages.append(dailyUsage)
+        }
+        
+        return dailyUsages
+    }
+    
+    /// 执行项目查询的通用方法
+    private func executeProjectQuery(_ sql: String, parameters: [Any]) throws -> [ProjectUsage] {
+        var statement: OpaquePointer?
+        var projectUsages: [ProjectUsage] = []
+        
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            return []
+        }
+        
+        defer { sqlite3_finalize(statement) }
+        
+        // 绑定参数
+        for (index, parameter) in parameters.enumerated() {
+            if let stringParam = parameter as? String {
+                stringParam.withCString { cString in
+                    sqlite3_bind_text(statement, Int32(index + 1), cString, -1, nil)
+                }
+            }
+        }
+        
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let projectPathPtr = sqlite3_column_text(statement, 0),
+                  let projectNamePtr = sqlite3_column_text(statement, 1) else { continue }
+            
+            let projectPath = String(cString: projectPathPtr)
+            let projectName = String(cString: projectNamePtr)
+            let totalCost = sqlite3_column_double(statement, 2)
+            let totalTokens = Int(sqlite3_column_int64(statement, 3))
+            let sessionCount = Int(sqlite3_column_int(statement, 4))
+            let requestCount = Int(sqlite3_column_int(statement, 5))
+            
+            var lastUsed = ""
+            if let lastUsedPtr = sqlite3_column_text(statement, 6) {
+                lastUsed = String(cString: lastUsedPtr)
+            }
+            
+            let projectUsage = ProjectUsage(
+                projectPath: projectPath,
+                projectName: projectName,
+                totalCost: totalCost,
+                totalTokens: totalTokens,
+                sessionCount: sessionCount,
+                requestCount: requestCount,
+                lastUsed: lastUsed
+            )
+            
+            projectUsages.append(projectUsage)
+        }
+        
+        return projectUsages
     }
     
     /// 获取会话统计数据的内部实现
@@ -1040,6 +1437,236 @@ extension UsageStatisticsDatabase {
     }
 }
 
+// MARK: - 数据迁移和维护操作
+
+extension UsageStatisticsDatabase {
+    
+    /// 清空所有数据并重置ID序列
+    /// 用于全量数据迁移前的数据库清理
+    func clearAllDataAndResetSequences() throws {
+        try dbQueue.sync {
+            try clearAllDataAndResetSequencesInternal()
+        }
+    }
+    
+    private func clearAllDataAndResetSequencesInternal() throws {
+        Logger.shared.info("🗑️ 开始清空所有数据并重置ID序列")
+        
+        // 先在事务外执行删除和重建操作
+        do {
+            // 强制重建数据库以确保表结构正确（不在事务中）
+            try forceRebuildDatabaseWithoutVacuum()
+            
+            // 重新创建表
+            try createTables()
+            
+            // 使用测试文件中的多重保险方法确保AUTO_INCREMENT从1开始
+            try ensureAutoIncrementFromOne()
+            
+            // 最后执行VACUUM压缩数据库（不在事务中）
+            try executeSQL("VACUUM")
+            
+            Logger.shared.info("✅ 数据清空和序列重置完成，ID序列已重置为从1开始")
+            
+        } catch {
+            Logger.shared.error("❌ 数据清空失败: \(error)")
+            throw error
+        }
+    }
+    
+    /// 确保AUTO_INCREMENT序列从1开始的多重保险方法（与测试文件完全一致）
+    private func ensureAutoIncrementFromOne() throws {
+        let tableNames = ["usage_entries", "jsonl_files", "daily_statistics", "model_statistics", "project_statistics"]
+        
+        // 方法1：强制删除所有sequence记录
+        try? executeSQL("DELETE FROM sqlite_sequence")
+        
+        // 方法2：为每个表明确设置序列值为0（下一个ID将是1）
+        for tableName in tableNames {
+            try? executeSQL("DELETE FROM sqlite_sequence WHERE name='\(tableName)'")
+            try? executeSQL("INSERT OR REPLACE INTO sqlite_sequence (name, seq) VALUES ('\(tableName)', 0)")
+        }
+        
+        // 方法3：通过一个虚拟插入和删除来强制重置（最可靠的方法）
+        for tableName in tableNames {
+            // 插入一条虚拟记录来触发AUTO_INCREMENT
+            switch tableName {
+            case "usage_entries":
+                try? executeSQL("INSERT INTO usage_entries (timestamp, model) VALUES ('test', 'test')")
+                try? executeSQL("DELETE FROM usage_entries WHERE model='test'")
+            case "jsonl_files":
+                try? executeSQL("INSERT INTO jsonl_files (file_path, file_name, file_size, last_modified) VALUES ('test', 'test', 0, 'test')")
+                try? executeSQL("DELETE FROM jsonl_files WHERE file_path='test'")
+            case "daily_statistics":
+                try? executeSQL("INSERT INTO daily_statistics (date_string) VALUES ('test')")
+                try? executeSQL("DELETE FROM daily_statistics WHERE date_string='test'")
+            case "model_statistics":
+                try? executeSQL("INSERT INTO model_statistics (model, date_range) VALUES ('test', 'test')")
+                try? executeSQL("DELETE FROM model_statistics WHERE model='test'")
+            case "project_statistics":
+                try? executeSQL("INSERT INTO project_statistics (project_path, project_name, date_range) VALUES ('test', 'test', 'test')")
+                try? executeSQL("DELETE FROM project_statistics WHERE project_path='test'")
+            default:
+                break
+            }
+            
+            // 再次确保序列重置为0
+            try? executeSQL("UPDATE sqlite_sequence SET seq = 0 WHERE name='\(tableName)'")
+        }
+        
+        Logger.shared.info("🔄 已通过多重方法强制重置所有AUTO_INCREMENT序列从1开始")
+    }
+    
+    /// 修复所有记录的日期字符串
+    /// 使用 SQLite 的 datetime 函数进行精确日期解析
+    func updateAllDateStrings() throws {
+        try dbQueue.sync {
+            try updateAllDateStringsInternal()
+        }
+    }
+    
+    private func updateAllDateStringsInternal() throws {
+        print("🗓️ 修复所有日期字符串...")
+        
+        // 开始事务
+        try executeSQL("BEGIN TRANSACTION")
+        
+        do {
+            // 使用 SQLite 的 datetime 函数进行精确的日期解析
+            // 这个方法可以正确处理 ISO8601 时间戳并转换为本地日期
+            let updateSQL = """
+            UPDATE usage_entries 
+            SET date_string = date(datetime(timestamp, 'localtime'))
+            WHERE timestamp IS NOT NULL AND timestamp != ''
+            """
+            
+            try executeSQL(updateSQL)
+            
+            // 检查是否有无法解析的时间戳，使用备用方法
+            let checkSQL = """
+            UPDATE usage_entries 
+            SET date_string = substr(timestamp, 1, 10)
+            WHERE date_string IS NULL OR date_string = '' OR date_string = '1970-01-01'
+            """
+            
+            try executeSQL(checkSQL)
+            
+            // 提交事务
+            try executeSQL("COMMIT")
+            
+            print("✅ 日期字符串修复完成")
+            
+        } catch {
+            // 回滚事务
+            try? executeSQL("ROLLBACK")
+            Logger.shared.error("❌ 日期字符串修复失败: \(error)")
+            throw error
+        }
+    }
+    
+    /// 去重处理 - 移除重复的使用记录
+    /// 使用 ROW_NUMBER() 窗口函数按 message_id 和 request_id 进行去重
+    func deduplicateEntries() throws {
+        try dbQueue.sync {
+            try deduplicateEntriesInternal()
+        }
+    }
+    
+    private func deduplicateEntriesInternal() throws {
+        print("🧹 开始激进去重逻辑处理...")
+        
+        // 开始事务
+        try executeSQL("BEGIN TRANSACTION")
+        
+        do {
+            // 创建临时表存储去重后的数据
+            let createTempTableSQL = """
+            CREATE TEMP TABLE temp_unique_entries AS
+            SELECT *,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY 
+                           CASE 
+                               WHEN message_id IS NOT NULL AND request_id IS NOT NULL 
+                               THEN message_id || ':' || request_id
+                               ELSE CAST(id AS TEXT) 
+                           END
+                       ORDER BY timestamp
+                   ) as rn
+            FROM usage_entries
+            WHERE message_id IS NOT NULL AND request_id IS NOT NULL
+            
+            UNION ALL
+            
+            SELECT *, 1 as rn
+            FROM usage_entries 
+            WHERE message_id IS NULL OR request_id IS NULL
+            """
+            
+            try executeSQL(createTempTableSQL)
+            
+            // 统计去重前后的数量
+            let beforeCount = getCount(sql: "SELECT COUNT(*) FROM usage_entries")
+            let afterCount = getCount(sql: "SELECT COUNT(*) FROM temp_unique_entries WHERE rn = 1")
+            let duplicateCount = beforeCount - afterCount
+            
+            print("📊 去重统计: 原始 \(beforeCount) 条，去重后 \(afterCount) 条")
+            print("📊 重复记录: \(duplicateCount) 条")
+            
+            // 删除原表数据
+            try executeSQL("DELETE FROM usage_entries")
+            
+            // 插入去重后的数据 (排除生成列 total_tokens)
+            let insertSQL = """
+            INSERT INTO usage_entries (
+                id, timestamp, model, input_tokens, output_tokens, 
+                cache_creation_tokens, cache_read_tokens, cost,
+                session_id, project_path, project_name, 
+                request_id, message_id, message_type, date_string, source_file,
+                created_at, updated_at
+            )
+            SELECT id, timestamp, model, input_tokens, output_tokens, 
+                   cache_creation_tokens, cache_read_tokens, cost,
+                   session_id, project_path, project_name, 
+                   request_id, message_id, message_type, date_string, source_file,
+                   created_at, updated_at
+            FROM temp_unique_entries 
+            WHERE rn = 1
+            """
+            
+            try executeSQL(insertSQL)
+            
+            // 删除临时表
+            try executeSQL("DROP TABLE temp_unique_entries")
+            
+            // 提交事务
+            try executeSQL("COMMIT")
+            
+            print("✅ 去重处理完成")
+            
+        } catch {
+            // 回滚事务
+            try? executeSQL("ROLLBACK")
+            Logger.shared.error("❌ 去重处理失败: \(error)")
+            throw error
+        }
+    }
+    
+    /// 获取记录数量的辅助方法（与测试文件完全一致）
+    private func getCount(sql: String) -> Int {
+        var statement: OpaquePointer?
+        var count = 0
+
+        if sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK {
+            if sqlite3_step(statement) == SQLITE_ROW {
+                count = Int(sqlite3_column_int(statement, 0))
+            }
+        }
+        sqlite3_finalize(statement)
+
+        return count
+    }
+}
+
 // MARK: - 统计汇总表维护
 
 extension UsageStatisticsDatabase {
@@ -1050,20 +1677,49 @@ extension UsageStatisticsDatabase {
             try updateStatisticsSummariesInternal()
         }
     }
-    
+
+    /// 生成所有统计汇总（与测试文件完全一致）
+    func generateAllStatistics() throws {
+        try dbQueue.sync {
+            try generateAllStatisticsInternal()
+        }
+    }
+
     private func updateStatisticsSummariesInternal() throws {
         // 开始事务
         try executeSQL("BEGIN TRANSACTION")
-        
+
         do {
             try updateDailyStatistics()
             try updateModelStatistics()
             try updateProjectStatistics()
-            
+
             // 提交事务
             try executeSQL("COMMIT")
             print("统计汇总表更新完成")
-            
+
+        } catch {
+            // 回滚事务
+            try? executeSQL("ROLLBACK")
+            throw error
+        }
+    }
+
+    private func generateAllStatisticsInternal() throws {
+        print("📊 开始生成所有统计汇总...")
+
+        // 开始事务
+        try executeSQL("BEGIN TRANSACTION")
+
+        do {
+            try generateDailyStatistics()
+            try generateModelStatistics()
+            try generateProjectStatistics()
+
+            // 提交事务
+            try executeSQL("COMMIT")
+            print("✅ 所有统计汇总生成完成")
+
         } catch {
             // 回滚事务
             try? executeSQL("ROLLBACK")
@@ -1071,15 +1727,22 @@ extension UsageStatisticsDatabase {
         }
     }
     
-    /// 更新每日统计表
+    /// 更新每日统计表（直接复制测试文件中的正确逻辑）
     private func updateDailyStatistics() throws {
-        let updateSQL = """
-        INSERT OR REPLACE INTO daily_statistics (
+        // 先删除所有现有统计数据，确保重新生成时ID从1开始
+        try executeSQL("DELETE FROM daily_statistics")
+        
+        // 强制重置序列为0（下一个插入将从1开始）
+        try executeSQL("DELETE FROM sqlite_sequence WHERE name='daily_statistics'")
+        try executeSQL("INSERT INTO sqlite_sequence (name, seq) VALUES ('daily_statistics', 0)")
+        
+        let insertSQL = """
+        INSERT INTO daily_statistics (
             date_string, total_cost, total_tokens, input_tokens, output_tokens,
             cache_creation_tokens, cache_read_tokens, session_count, request_count,
-            models_used, last_updated
+            models_used, created_at, updated_at
         )
-        SELECT 
+        SELECT
             date_string,
             SUM(cost) as total_cost,
             SUM(total_tokens) as total_tokens,
@@ -1090,35 +1753,139 @@ extension UsageStatisticsDatabase {
             COUNT(DISTINCT session_id) as session_count,
             COUNT(*) as request_count,
             GROUP_CONCAT(DISTINCT model) as models_used,
-            CURRENT_TIMESTAMP as last_updated
+            datetime('now', 'localtime') as created_at,
+            datetime('now', 'localtime') as updated_at
         FROM usage_entries
         GROUP BY date_string
+        ORDER BY date_string
         """
         
-        try executeSQL(updateSQL)
+        try executeSQL(insertSQL)
     }
-    
-    /// 更新模型统计表
-    private func updateModelStatistics() throws {
-        // 更新全部时间范围的统计
-        try updateModelStatisticsForRange("all", whereCondition: "")
-        
-        // 更新最近7天的统计
-        let last7DaysCondition = "WHERE timestamp >= datetime('now', '-7 days')"
-        try updateModelStatisticsForRange("7d", whereCondition: last7DaysCondition)
-        
-        // 更新最近30天的统计
-        let last30DaysCondition = "WHERE timestamp >= datetime('now', '-30 days')"
-        try updateModelStatisticsForRange("30d", whereCondition: last30DaysCondition)
-    }
-    
-    private func updateModelStatisticsForRange(_ range: String, whereCondition: String) throws {
-        let updateSQL = """
-        INSERT OR REPLACE INTO model_statistics (
-            model, date_range, total_cost, total_tokens, input_tokens, output_tokens,
-            cache_creation_tokens, cache_read_tokens, session_count, request_count, last_updated
+
+    /// 生成每日统计表（与测试文件完全一致）
+    private func generateDailyStatistics() throws {
+        // 先删除所有现有统计数据，确保重新生成时ID从1开始
+        try executeSQL("DELETE FROM daily_statistics")
+
+        // 强制重置序列为0（下一个插入将从1开始）
+        try executeSQL("DELETE FROM sqlite_sequence WHERE name='daily_statistics'")
+        try executeSQL("INSERT INTO sqlite_sequence (name, seq) VALUES ('daily_statistics', 0)")
+
+        let insertSQL = """
+        INSERT INTO daily_statistics (
+            date_string, total_cost, total_tokens, input_tokens, output_tokens,
+            cache_creation_tokens, cache_read_tokens, session_count, request_count,
+            models_used, created_at, updated_at
         )
-        SELECT 
+        SELECT
+            date_string,
+            SUM(cost) as total_cost,
+            SUM(total_tokens) as total_tokens,
+            SUM(input_tokens) as input_tokens,
+            SUM(output_tokens) as output_tokens,
+            SUM(cache_creation_tokens) as cache_creation_tokens,
+            SUM(cache_read_tokens) as cache_read_tokens,
+            COUNT(DISTINCT session_id) as session_count,
+            COUNT(*) as request_count,
+            GROUP_CONCAT(DISTINCT model) as models_used,
+            datetime('now', 'localtime') as created_at,
+            datetime('now', 'localtime') as updated_at
+        FROM usage_entries
+        GROUP BY date_string
+        ORDER BY date_string
+        """
+
+        try executeSQL(insertSQL)
+
+        // 打印详细的token统计信息
+        let tokenStatsSQL = """
+        SELECT
+            SUM(input_tokens) as total_input,
+            SUM(output_tokens) as total_output,
+            SUM(cache_creation_tokens) as total_cache_creation,
+            SUM(cache_read_tokens) as total_cache_read,
+            SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens) as grand_total,
+            COUNT(*) as record_count
+        FROM usage_entries
+        """
+
+        var statement: OpaquePointer?
+        if sqlite3_prepare_v2(db, tokenStatsSQL, -1, &statement, nil) == SQLITE_OK {
+            if sqlite3_step(statement) == SQLITE_ROW {
+                let totalInput = sqlite3_column_int64(statement, 0)
+                let totalOutput = sqlite3_column_int64(statement, 1)
+                let totalCacheCreation = sqlite3_column_int64(statement, 2)
+                let totalCacheRead = sqlite3_column_int64(statement, 3)
+                let grandTotal = sqlite3_column_int64(statement, 4)
+                let recordCount = sqlite3_column_int(statement, 5)
+
+                print("   📊 Token统计详情:")
+                print("      - 输入Token: \(totalInput)")
+                print("      - 输出Token: \(totalOutput)")
+                print("      - 缓存创建Token: \(totalCacheCreation)")
+                print("      - 缓存读取Token: \(totalCacheRead)")
+                print("      - 总Token数: \(grandTotal)")
+                print("      - 记录数: \(recordCount)")
+            }
+        }
+        sqlite3_finalize(statement)
+
+        print("   ✅ 每日统计表重新生成完成（ID从1开始）")
+    }
+
+    /// 更新模型统计表（直接复制测试文件中的正确逻辑）
+    private func updateModelStatistics() throws {
+        // 先删除所有现有模型统计数据，确保重新生成时ID从1开始
+        try executeSQL("DELETE FROM model_statistics")
+        
+        // 强制重置序列为0（下一个插入将从1开始）
+        try executeSQL("DELETE FROM sqlite_sequence WHERE name='model_statistics'")
+        try executeSQL("INSERT INTO sqlite_sequence (name, seq) VALUES ('model_statistics', 0)")
+        
+        // 生成全部时间范围的模型统计
+        try generateModelStatisticsForRange("all", whereCondition: "")
+        
+        // 生成最近7天的模型统计
+        let last7DaysCondition = "WHERE timestamp >= datetime('now', '-7 days')"
+        try generateModelStatisticsForRange("7d", whereCondition: last7DaysCondition)
+        
+        // 生成最近30天的模型统计
+        let last30DaysCondition = "WHERE timestamp >= datetime('now', '-30 days')"
+        try generateModelStatisticsForRange("30d", whereCondition: last30DaysCondition)
+    }
+
+    /// 生成模型统计表（与测试文件完全一致）
+    private func generateModelStatistics() throws {
+        // 先删除所有现有模型统计数据，确保重新生成时ID从1开始
+        try executeSQL("DELETE FROM model_statistics")
+
+        // 强制重置序列为0（下一个插入将从1开始）
+        try executeSQL("DELETE FROM sqlite_sequence WHERE name='model_statistics'")
+        try executeSQL("INSERT INTO sqlite_sequence (name, seq) VALUES ('model_statistics', 0)")
+
+        // 生成全部时间范围的模型统计
+        try generateModelStatisticsForRange("all", whereCondition: "")
+
+        // 生成最近7天的模型统计
+        let last7DaysCondition = "WHERE timestamp >= datetime('now', '-7 days')"
+        try generateModelStatisticsForRange("7d", whereCondition: last7DaysCondition)
+
+        // 生成最近30天的模型统计
+        let last30DaysCondition = "WHERE timestamp >= datetime('now', '-30 days')"
+        try generateModelStatisticsForRange("30d", whereCondition: last30DaysCondition)
+
+        print("   ✅ 模型统计表重新生成完成（ID从1开始）")
+    }
+
+    private func generateModelStatisticsForRange(_ range: String, whereCondition: String) throws {
+        let insertSQL = """
+        INSERT INTO model_statistics (
+            model, date_range, total_cost, total_tokens, input_tokens, output_tokens,
+            cache_creation_tokens, cache_read_tokens, session_count, request_count, 
+            created_at, updated_at
+        )
+        SELECT
             model,
             '\(range)' as date_range,
             SUM(cost) as total_cost,
@@ -1129,35 +1896,67 @@ extension UsageStatisticsDatabase {
             SUM(cache_read_tokens) as cache_read_tokens,
             COUNT(DISTINCT session_id) as session_count,
             COUNT(*) as request_count,
-            CURRENT_TIMESTAMP as last_updated
+            datetime('now', 'localtime') as created_at,
+            datetime('now', 'localtime') as updated_at
         FROM usage_entries \(whereCondition)
         GROUP BY model
+        ORDER BY total_cost DESC
         """
         
-        try executeSQL(updateSQL)
+        try executeSQL(insertSQL)
     }
     
-    /// 更新项目统计表
+    /// 更新项目统计表（直接复制测试文件中的正确逻辑）
     private func updateProjectStatistics() throws {
-        // 更新全部时间范围的统计
-        try updateProjectStatisticsForRange("all", whereCondition: "")
+        // 先删除所有现有项目统计数据，确保重新生成时ID从1开始
+        try executeSQL("DELETE FROM project_statistics")
         
-        // 更新最近7天的统计
+        // 强制重置序列为0（下一个插入将从1开始）
+        try executeSQL("DELETE FROM sqlite_sequence WHERE name='project_statistics'")
+        try executeSQL("INSERT INTO sqlite_sequence (name, seq) VALUES ('project_statistics', 0)")
+        
+        // 生成全部时间范围的项目统计
+        try generateProjectStatisticsForRange("all", whereCondition: "")
+        
+        // 生成最近7天的项目统计
         let last7DaysCondition = "WHERE timestamp >= datetime('now', '-7 days')"
-        try updateProjectStatisticsForRange("7d", whereCondition: last7DaysCondition)
+        try generateProjectStatisticsForRange("7d", whereCondition: last7DaysCondition)
         
-        // 更新最近30天的统计
+        // 生成最近30天的项目统计
         let last30DaysCondition = "WHERE timestamp >= datetime('now', '-30 days')"
-        try updateProjectStatisticsForRange("30d", whereCondition: last30DaysCondition)
+        try generateProjectStatisticsForRange("30d", whereCondition: last30DaysCondition)
     }
-    
-    private func updateProjectStatisticsForRange(_ range: String, whereCondition: String) throws {
-        let updateSQL = """
-        INSERT OR REPLACE INTO project_statistics (
+
+    /// 生成项目统计表（与测试文件完全一致）
+    private func generateProjectStatistics() throws {
+        // 先删除所有现有项目统计数据，确保重新生成时ID从1开始
+        try executeSQL("DELETE FROM project_statistics")
+
+        // 强制重置序列为0（下一个插入将从1开始）
+        try executeSQL("DELETE FROM sqlite_sequence WHERE name='project_statistics'")
+        try executeSQL("INSERT INTO sqlite_sequence (name, seq) VALUES ('project_statistics', 0)")
+
+        // 生成全部时间范围的项目统计
+        try generateProjectStatisticsForRange("all", whereCondition: "")
+
+        // 生成最近7天的项目统计
+        let last7DaysCondition = "WHERE timestamp >= datetime('now', '-7 days')"
+        try generateProjectStatisticsForRange("7d", whereCondition: last7DaysCondition)
+
+        // 生成最近30天的项目统计
+        let last30DaysCondition = "WHERE timestamp >= datetime('now', '-30 days')"
+        try generateProjectStatisticsForRange("30d", whereCondition: last30DaysCondition)
+
+        print("   ✅ 项目统计表重新生成完成（ID从1开始）")
+    }
+
+    private func generateProjectStatisticsForRange(_ range: String, whereCondition: String) throws {
+        let insertSQL = """
+        INSERT INTO project_statistics (
             project_path, project_name, date_range, total_cost, total_tokens,
-            session_count, request_count, last_used, last_updated
+            session_count, request_count, last_used, created_at, updated_at
         )
-        SELECT 
+        SELECT
             project_path,
             project_name,
             '\(range)' as date_range,
@@ -1166,12 +1965,14 @@ extension UsageStatisticsDatabase {
             COUNT(DISTINCT session_id) as session_count,
             COUNT(*) as request_count,
             MAX(timestamp) as last_used,
-            CURRENT_TIMESTAMP as last_updated
+            datetime('now', 'localtime') as created_at,
+            datetime('now', 'localtime') as updated_at
         FROM usage_entries \(whereCondition)
         GROUP BY project_path, project_name
+        ORDER BY total_cost DESC
         """
         
-        try executeSQL(updateSQL)
+        try executeSQL(insertSQL)
     }
     
     /// 增量更新统计（仅更新指定日期的数据）
@@ -1187,7 +1988,7 @@ extension UsageStatisticsDatabase {
         INSERT OR REPLACE INTO daily_statistics (
             date_string, total_cost, total_tokens, input_tokens, output_tokens,
             cache_creation_tokens, cache_read_tokens, session_count, request_count,
-            models_used, last_updated
+            models_used, created_at, updated_at
         )
         SELECT 
             date_string,
@@ -1200,7 +2001,8 @@ extension UsageStatisticsDatabase {
             COUNT(DISTINCT session_id) as session_count,
             COUNT(*) as request_count,
             GROUP_CONCAT(DISTINCT model) as models_used,
-            CURRENT_TIMESTAMP as last_updated
+            datetime('now', 'localtime') as created_at,
+            datetime('now', 'localtime') as updated_at
         FROM usage_entries
         WHERE date_string = ?
         GROUP BY date_string

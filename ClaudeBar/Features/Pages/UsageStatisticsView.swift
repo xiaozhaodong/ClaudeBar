@@ -3,6 +3,7 @@ import SwiftUI
 /// 使用统计主界面
 struct UsageStatisticsView: View {
     @StateObject private var viewModel: UsageStatisticsViewModel
+    @EnvironmentObject private var appState: AppState
     
     init(configService: ConfigServiceProtocol) {
         self._viewModel = StateObject(wrappedValue: UsageStatisticsViewModel(configService: configService))
@@ -12,6 +13,11 @@ struct UsageStatisticsView: View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.Page.componentSpacing) {
             // 页面标题区域
             pageHeaderView
+            
+            // 同步状态区域
+            if appState.userPreferences.autoSyncEnabled {
+                syncStatusSection
+            }
             
             // 日期选择器区域
             dateRangeSelector
@@ -37,9 +43,20 @@ struct UsageStatisticsView: View {
         VStack(spacing: DesignTokens.Spacing.md) {
             HStack {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("使用统计")
-                        .font(DesignTokens.Typography.pageTitle)
-                        .foregroundColor(.primary)
+                    HStack(spacing: DesignTokens.Spacing.sm) {
+                        Text("使用统计")
+                            .font(DesignTokens.Typography.pageTitle)
+                            .foregroundColor(.primary)
+                        
+                        // 紧凑的同步状态指示器
+                        if appState.userPreferences.autoSyncEnabled {
+                            SyncStatusView(
+                                autoSyncService: appState.autoSyncService,
+                                displayMode: .compact,
+                                showDetails: false
+                            )
+                        }
+                    }
                     
                     Text("跟踪您的 Claude 使用情况和成本")
                         .font(DesignTokens.Typography.subtitle)
@@ -48,28 +65,57 @@ struct UsageStatisticsView: View {
                 
                 Spacer()
                 
-                // 刷新按钮
-                Button(action: {
-                    Task {
-                        await viewModel.refreshStatistics()
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    // 全量同步按钮（不受设置控制，始终显示）
+                    Button(action: {
+                        Task {
+                            do {
+                                _ = try await appState.autoSyncService.performFullSync()
+                            } catch {
+                                print("全量同步失败: \(error)")
+                            }
+                        }
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.triangle.2.circlepath.circle")
+                                .font(.system(size: 14, weight: .medium))
+                            Text("全量同步")
+                                .font(.system(size: 14, weight: .medium))
+                        }
+                        .foregroundColor(.blue)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.blue.opacity(0.1))
+                        )
                     }
-                }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 14, weight: .medium))
-                        Text("刷新")
-                            .font(.system(size: 14, weight: .medium))
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(appState.autoSyncService.isSyncing)
+                    
+                    // 刷新按钮
+                    Button(action: {
+                        Task {
+                            await viewModel.refreshStatistics()
+                        }
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 14, weight: .medium))
+                            Text("刷新")
+                                .font(.system(size: 14, weight: .medium))
+                        }
+                        .foregroundColor(.blue)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.blue.opacity(0.1))
+                        )
                     }
-                    .foregroundColor(.blue)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color.blue.opacity(0.1))
-                    )
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(viewModel.isLoading)
                 }
-                .buttonStyle(PlainButtonStyle())
-                .disabled(viewModel.isLoading)
             }
         }
         .padding(.horizontal, DesignTokens.Spacing.Page.padding)
@@ -347,6 +393,24 @@ struct UsageStatisticsView: View {
                 }
             }
             .padding(.top, DesignTokens.Spacing.lg)
+        }
+    }
+    
+    /// 同步状态区域
+    private var syncStatusSection: some View {
+        VStack(spacing: 0) {
+            SyncStatusView(
+                autoSyncService: appState.autoSyncService,
+                displayMode: .detailed,
+                showDetails: false
+            )
+            .padding(.horizontal, DesignTokens.Spacing.Page.padding)
+            
+            // 分隔线
+            Rectangle()
+                .fill(DesignTokens.Colors.separator.opacity(0.3))
+                .frame(height: 1)
+                .padding(.top, DesignTokens.Spacing.md)
         }
     }
 }

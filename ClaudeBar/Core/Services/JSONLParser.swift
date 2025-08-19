@@ -136,7 +136,7 @@ class JSONLParser {
                 }
                 
                 // 转换为标准使用记录
-                if let entry = rawEntry?.toUsageEntry(projectPath: projectPath) {
+                if let entry = rawEntry?.toUsageEntry(projectPath: projectPath, sourceFile: fileURL.lastPathComponent) {
                     // 应用日期过滤
                     if entry.isInDateRange(startDate: startDate, endDate: endDate) {
                         entries.append(entry)

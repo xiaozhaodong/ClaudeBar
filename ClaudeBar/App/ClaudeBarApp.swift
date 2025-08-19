@@ -20,6 +20,7 @@ struct ClaudeBarApp: App {
             WindowGroup("ClaudeBar") {
                 MainPopoverView()
                     .environmentObject(appState)
+                    .environmentObject(appState.userPreferences)
             }
             .windowStyle(.hiddenTitleBar)
             .windowResizability(.contentSize)
