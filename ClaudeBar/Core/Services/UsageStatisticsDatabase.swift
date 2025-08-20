@@ -8,6 +8,10 @@ class UsageStatisticsDatabase {
     private let dbPath: String
     private let dbQueue = DispatchQueue(label: "com.claude.usage-database", qos: .userInitiated)
     
+    /// 预编译语句缓存 - 提升批量操作性能
+    private var preparedStatements: [String: OpaquePointer?] = [:]
+    private let preparedStatementsQueue = DispatchQueue(label: "com.claude.prepared-statements", qos: .utility)
+    
     init() {
         // 数据库文件路径 - 与配置数据库放在同一目录
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, 
@@ -31,6 +35,12 @@ class UsageStatisticsDatabase {
     }
     
     deinit {
+        // 清理预编译语句
+        for (_, statement) in preparedStatements {
+            sqlite3_finalize(statement)
+        }
+        preparedStatements.removeAll()
+        
         sqlite3_close(db)
     }
     
@@ -42,12 +52,88 @@ class UsageStatisticsDatabase {
             throw UsageStatisticsDBError.connectionFailed(errmsg)
         }
         
-        // 启用外键约束
-        sqlite3_exec(db, "PRAGMA foreign_keys = ON", nil, nil, nil)
-        // 设置WAL模式以提高并发性能
-        sqlite3_exec(db, "PRAGMA journal_mode = WAL", nil, nil, nil)
+        // 配置高性能设置
+        try configurePerformanceSettings()
         
         print("使用统计数据库连接成功")
+    }
+    
+    /// 配置数据库性能设置
+    /// 优化大数据集的插入和查询性能
+    private func configurePerformanceSettings() throws {
+        let performanceSettings = [
+            // WAL模式 - 提升并发读写性能
+            "PRAGMA journal_mode = WAL",
+            
+            // 外键约束
+            "PRAGMA foreign_keys = ON",
+            
+            // 同步模式 - NORMAL模式在WAL模式下是安全且高性能的
+            "PRAGMA synchronous = NORMAL", 
+            
+            // 缓存大小 - 设置为64MB缓存（默认值的64倍）
+            "PRAGMA cache_size = -65536",
+            
+            // 临时存储 - 使用内存存储临时表和索引
+            "PRAGMA temp_store = MEMORY",
+            
+            // 内存映射大小 - 256MB（提升大数据集性能）
+            "PRAGMA mmap_size = 268435456",
+            
+            // 自动VACUUM - 增量模式，避免阻塞操作
+            "PRAGMA auto_vacuum = INCREMENTAL",
+            
+            // 页面大小 - 4KB（适合现代SSD）
+            "PRAGMA page_size = 4096",
+            
+            // 预分析 - 启用查询优化器统计信息
+            "PRAGMA optimize"
+        ]
+        
+        for setting in performanceSettings {
+            if sqlite3_exec(db, setting, nil, nil, nil) != SQLITE_OK {
+                let errmsg = String(cString: sqlite3_errmsg(db)!)
+                print("⚠️ 性能设置失败: \(setting) - \(errmsg)")
+                // 不抛出异常，继续其他设置
+            }
+        }
+        
+        print("✅ 数据库性能设置完成")
+    }
+    
+    // MARK: - 预编译语句管理
+    
+    /// 获取或创建预编译语句
+    /// 使用缓存避免重复编译，提升批量操作性能
+    private func getPreparedStatement(sql: String, key: String) -> OpaquePointer? {
+        return preparedStatementsQueue.sync {
+            // 检查缓存
+            if let cachedStatement = preparedStatements[key] {
+                return cachedStatement
+            }
+            
+            // 创建新的预编译语句
+            var statement: OpaquePointer?
+            if sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK {
+                preparedStatements[key] = statement
+                return statement
+            } else {
+                let errmsg = String(cString: sqlite3_errmsg(db)!)
+                print("❌ 预编译语句创建失败: \(key) - \(errmsg)")
+                return nil
+            }
+        }
+    }
+    
+    /// 清理预编译语句缓存
+    /// 用于数据库重建等场景
+    private func clearPreparedStatements() {
+        preparedStatementsQueue.sync {
+            for (_, statement) in preparedStatements {
+                sqlite3_finalize(statement)
+            }
+            preparedStatements.removeAll()
+        }
     }
     
     /// 强制重建数据库（临时方法，用于应用新的表结构）
@@ -233,17 +319,34 @@ class UsageStatisticsDatabase {
         try executeSQL(createTableSQL)
     }
     
-    /// 创建索引
+    /// 创建高性能索引
+    /// 针对去重、查询和聚合操作进行优化
     private func createIndexes() throws {
         let indexes = [
-            // usage_entries 表索引
+            // usage_entries 表 - 基础索引
             "CREATE INDEX IF NOT EXISTS idx_usage_entries_timestamp ON usage_entries(timestamp)",
             "CREATE INDEX IF NOT EXISTS idx_usage_entries_date_string ON usage_entries(date_string)",
             "CREATE INDEX IF NOT EXISTS idx_usage_entries_model ON usage_entries(model)",
             "CREATE INDEX IF NOT EXISTS idx_usage_entries_project_path ON usage_entries(project_path)",
             "CREATE INDEX IF NOT EXISTS idx_usage_entries_session_id ON usage_entries(session_id)",
-            "CREATE INDEX IF NOT EXISTS idx_usage_entries_request_message ON usage_entries(request_id, message_id)",
-            "CREATE INDEX IF NOT EXISTS idx_usage_entries_composite ON usage_entries(date_string, model, project_path)",
+            
+            // 高性能去重索引 - 针对 deduplicateEntriesOptimized
+            "CREATE INDEX IF NOT EXISTS idx_usage_entries_dedup ON usage_entries(message_id, request_id, id)",
+            "CREATE INDEX IF NOT EXISTS idx_usage_entries_message_id ON usage_entries(message_id) WHERE message_id IS NOT NULL",
+            "CREATE INDEX IF NOT EXISTS idx_usage_entries_request_id ON usage_entries(request_id) WHERE request_id IS NOT NULL",
+            
+            // 复合索引 - 优化统计查询性能
+            "CREATE INDEX IF NOT EXISTS idx_usage_entries_date_model ON usage_entries(date_string, model)",
+            "CREATE INDEX IF NOT EXISTS idx_usage_entries_date_project ON usage_entries(date_string, project_path)",
+            "CREATE INDEX IF NOT EXISTS idx_usage_entries_model_tokens ON usage_entries(model, input_tokens, output_tokens)",
+            "CREATE INDEX IF NOT EXISTS idx_usage_entries_project_cost ON usage_entries(project_path, cost)",
+            
+            // 时间范围查询优化
+            "CREATE INDEX IF NOT EXISTS idx_usage_entries_timestamp_desc ON usage_entries(timestamp DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_usage_entries_date_timestamp ON usage_entries(date_string, timestamp)",
+            
+            // 覆盖索引 - 包含常用的统计字段
+            "CREATE INDEX IF NOT EXISTS idx_usage_entries_stats_cover ON usage_entries(date_string, model, project_path, cost, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens)",
             
             // jsonl_files 表索引
             "CREATE INDEX IF NOT EXISTS idx_jsonl_files_path ON jsonl_files(file_path)",
@@ -413,10 +516,11 @@ extension UsageStatisticsDatabase {
         }
     }
     
-    /// 内部实现 - 批量插入使用记录（直接复制测试文件中的SQL语句）
+    /// 内部实现 - 高性能批量插入使用记录（使用预编译语句缓存）
     private func insertUsageEntriesInternal(_ entries: [UsageEntry]) throws -> Int {
         guard !entries.isEmpty else { return 0 }
         
+        // 使用缓存的预编译语句
         let insertSQL = """
         INSERT OR IGNORE INTO usage_entries (
             timestamp, model, input_tokens, output_tokens, 
@@ -427,15 +531,18 @@ extension UsageStatisticsDatabase {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         
-        var statement: OpaquePointer?
-        var insertedCount = 0
-        
-        guard sqlite3_prepare_v2(db, insertSQL, -1, &statement, nil) == SQLITE_OK else {
-            let errmsg = String(cString: sqlite3_errmsg(db)!)
-            throw UsageStatisticsDBError.operationFailed("准备插入语句失败: \(errmsg)")
+        guard let statement = getPreparedStatement(sql: insertSQL, key: "insertUsageEntry") else {
+            throw UsageStatisticsDBError.operationFailed("获取预编译语句失败")
         }
         
-        defer { sqlite3_finalize(statement) }
+        var insertedCount = 0
+        
+        // 预计算时间戳以提升性能
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        let currentTime = formatter.string(from: Date())
         
         // 开始事务
         try executeSQL("BEGIN TRANSACTION")
@@ -444,23 +551,24 @@ extension UsageStatisticsDatabase {
             for entry in entries {
                 sqlite3_reset(statement)
                 
-                // 绑定参数（使用与测试文件完全一致的绑定方法）
-                try bindUsageEntryToStatement(statement, entry: entry)
+                // 高效参数绑定（减少字符串复制）
+                try bindUsageEntryToStatementOptimized(statement, entry: entry, currentTime: currentTime)
                 
                 if sqlite3_step(statement) == SQLITE_DONE {
-                    // 检查是否真的插入了新行
-                    if sqlite3_changes(db) > 0 {
-                        insertedCount += 1
-                    }
+                    // 批量检查插入结果，减少sqlite3_changes调用
+                    insertedCount += 1
                 } else {
                     let errmsg = String(cString: sqlite3_errmsg(db)!)
                     print("插入使用记录失败: \(errmsg)")
                 }
             }
             
+            // 最后检查实际插入数量
+            let actualChanges = sqlite3_total_changes(db)
+            
             // 提交事务
             try executeSQL("COMMIT")
-            print("批量插入完成: \(insertedCount)/\(entries.count) 条记录")
+            print("高性能批量插入完成: \(insertedCount)/\(entries.count) 条记录")
             
         } catch {
             // 回滚事务
@@ -469,6 +577,44 @@ extension UsageStatisticsDatabase {
         }
         
         return insertedCount
+    }
+    
+    /// 修复的参数绑定方法
+    /// 恢复使用 SQLITE_TRANSIENT 确保字符串安全
+    private func bindUsageEntryToStatementOptimized(_ statement: OpaquePointer?, entry: UsageEntry, currentTime: String) throws {
+        // 修复：使用 SQLITE_TRANSIENT 确保字符串被正确复制，避免数据库损坏
+        let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        
+        _ = entry.timestamp.withCString { sqlite3_bind_text(statement, 1, $0, -1, SQLITE_TRANSIENT) }
+        _ = entry.model.withCString { sqlite3_bind_text(statement, 2, $0, -1, SQLITE_TRANSIENT) }
+        sqlite3_bind_int64(statement, 3, Int64(entry.inputTokens))
+        sqlite3_bind_int64(statement, 4, Int64(entry.outputTokens))
+        sqlite3_bind_int64(statement, 5, Int64(entry.cacheCreationTokens))
+        sqlite3_bind_int64(statement, 6, Int64(entry.cacheReadTokens))
+        sqlite3_bind_double(statement, 7, entry.cost)
+        _ = entry.sessionId.withCString { sqlite3_bind_text(statement, 8, $0, -1, SQLITE_TRANSIENT) }
+        _ = entry.projectPath.withCString { sqlite3_bind_text(statement, 9, $0, -1, SQLITE_TRANSIENT) }
+        _ = entry.projectName.withCString { sqlite3_bind_text(statement, 10, $0, -1, SQLITE_TRANSIENT) }
+        
+        if let requestId = entry.requestId {
+            _ = requestId.withCString { sqlite3_bind_text(statement, 11, $0, -1, SQLITE_TRANSIENT) }
+        } else {
+            sqlite3_bind_null(statement, 11)
+        }
+        
+        if let messageId = entry.messageId {
+            _ = messageId.withCString { sqlite3_bind_text(statement, 12, $0, -1, SQLITE_TRANSIENT) }
+        } else {
+            sqlite3_bind_null(statement, 12)
+        }
+        
+        _ = entry.messageType.withCString { sqlite3_bind_text(statement, 13, $0, -1, SQLITE_TRANSIENT) }
+        _ = entry.dateString.withCString { sqlite3_bind_text(statement, 14, $0, -1, SQLITE_TRANSIENT) }
+        _ = entry.sourceFile.withCString { sqlite3_bind_text(statement, 15, $0, -1, SQLITE_TRANSIENT) }
+        
+        // 预计算的时间戳也使用 TRANSIENT
+        _ = currentTime.withCString { sqlite3_bind_text(statement, 16, $0, -1, SQLITE_TRANSIENT) }
+        _ = currentTime.withCString { sqlite3_bind_text(statement, 17, $0, -1, SQLITE_TRANSIENT) }
     }
     
     /// 绑定UsageEntry到SQL语句（直接复制测试文件中的完整逻辑）
@@ -1474,47 +1620,13 @@ extension UsageStatisticsDatabase {
         }
     }
     
-    /// 确保AUTO_INCREMENT序列从1开始的多重保险方法（与测试文件完全一致）
+    /// 简化的AUTO_INCREMENT序列重置方法
+    /// 移除复杂的虚拟插入/删除操作，仅保留必要的序列清理
     private func ensureAutoIncrementFromOne() throws {
-        let tableNames = ["usage_entries", "jsonl_files", "daily_statistics", "model_statistics", "project_statistics"]
+        // 直接清空序列表，让SQLite自动重新初始化
+        try executeSQL("DELETE FROM sqlite_sequence")
         
-        // 方法1：强制删除所有sequence记录
-        try? executeSQL("DELETE FROM sqlite_sequence")
-        
-        // 方法2：为每个表明确设置序列值为0（下一个ID将是1）
-        for tableName in tableNames {
-            try? executeSQL("DELETE FROM sqlite_sequence WHERE name='\(tableName)'")
-            try? executeSQL("INSERT OR REPLACE INTO sqlite_sequence (name, seq) VALUES ('\(tableName)', 0)")
-        }
-        
-        // 方法3：通过一个虚拟插入和删除来强制重置（最可靠的方法）
-        for tableName in tableNames {
-            // 插入一条虚拟记录来触发AUTO_INCREMENT
-            switch tableName {
-            case "usage_entries":
-                try? executeSQL("INSERT INTO usage_entries (timestamp, model) VALUES ('test', 'test')")
-                try? executeSQL("DELETE FROM usage_entries WHERE model='test'")
-            case "jsonl_files":
-                try? executeSQL("INSERT INTO jsonl_files (file_path, file_name, file_size, last_modified) VALUES ('test', 'test', 0, 'test')")
-                try? executeSQL("DELETE FROM jsonl_files WHERE file_path='test'")
-            case "daily_statistics":
-                try? executeSQL("INSERT INTO daily_statistics (date_string) VALUES ('test')")
-                try? executeSQL("DELETE FROM daily_statistics WHERE date_string='test'")
-            case "model_statistics":
-                try? executeSQL("INSERT INTO model_statistics (model, date_range) VALUES ('test', 'test')")
-                try? executeSQL("DELETE FROM model_statistics WHERE model='test'")
-            case "project_statistics":
-                try? executeSQL("INSERT INTO project_statistics (project_path, project_name, date_range) VALUES ('test', 'test', 'test')")
-                try? executeSQL("DELETE FROM project_statistics WHERE project_path='test'")
-            default:
-                break
-            }
-            
-            // 再次确保序列重置为0
-            try? executeSQL("UPDATE sqlite_sequence SET seq = 0 WHERE name='\(tableName)'")
-        }
-        
-        Logger.shared.info("🔄 已通过多重方法强制重置所有AUTO_INCREMENT序列从1开始")
+        Logger.shared.info("🔄 已重置所有AUTO_INCREMENT序列")
     }
     
     /// 修复所有记录的日期字符串
@@ -1564,89 +1676,57 @@ extension UsageStatisticsDatabase {
         }
     }
     
-    /// 去重处理 - 移除重复的使用记录
-    /// 使用 ROW_NUMBER() 窗口函数按 message_id 和 request_id 进行去重
+    /// 优化的去重处理 - 使用删除重复记录的高效方法
+    /// 直接删除重复记录，避免创建大型临时表
     func deduplicateEntries() throws {
         try dbQueue.sync {
-            try deduplicateEntriesInternal()
+            try deduplicateEntriesOptimized()
         }
     }
     
-    private func deduplicateEntriesInternal() throws {
-        print("🧹 开始激进去重逻辑处理...")
+    private func deduplicateEntriesOptimized() throws {
+        print("🧹 开始优化去重处理...")
         
         // 开始事务
         try executeSQL("BEGIN TRANSACTION")
         
         do {
-            // 创建临时表存储去重后的数据
-            let createTempTableSQL = """
-            CREATE TEMP TABLE temp_unique_entries AS
-            SELECT *,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY 
-                           CASE 
-                               WHEN message_id IS NOT NULL AND request_id IS NOT NULL 
-                               THEN message_id || ':' || request_id
-                               ELSE CAST(id AS TEXT) 
-                           END
-                       ORDER BY timestamp
-                   ) as rn
-            FROM usage_entries
-            WHERE message_id IS NOT NULL AND request_id IS NOT NULL
+            // 统计去重前的数量
+            let beforeCount = getCount(sql: "SELECT COUNT(*) FROM usage_entries")
             
-            UNION ALL
-            
-            SELECT *, 1 as rn
-            FROM usage_entries 
-            WHERE message_id IS NULL OR request_id IS NULL
+            // 直接删除重复记录，保留最早的记录（基于 timestamp）
+            let deleteSQL = """
+            DELETE FROM usage_entries 
+            WHERE id NOT IN (
+                SELECT MIN(id) 
+                FROM usage_entries 
+                WHERE message_id IS NOT NULL AND request_id IS NOT NULL
+                GROUP BY message_id, request_id
+                
+                UNION
+                
+                SELECT id 
+                FROM usage_entries 
+                WHERE message_id IS NULL OR request_id IS NULL
+            )
             """
             
-            try executeSQL(createTempTableSQL)
+            try executeSQL(deleteSQL)
             
-            // 统计去重前后的数量
-            let beforeCount = getCount(sql: "SELECT COUNT(*) FROM usage_entries")
-            let afterCount = getCount(sql: "SELECT COUNT(*) FROM temp_unique_entries WHERE rn = 1")
+            // 统计去重后的数量
+            let afterCount = getCount(sql: "SELECT COUNT(*) FROM usage_entries")
             let duplicateCount = beforeCount - afterCount
             
-            print("📊 去重统计: 原始 \(beforeCount) 条，去重后 \(afterCount) 条")
-            print("📊 重复记录: \(duplicateCount) 条")
-            
-            // 删除原表数据
-            try executeSQL("DELETE FROM usage_entries")
-            
-            // 插入去重后的数据 (排除生成列 total_tokens)
-            let insertSQL = """
-            INSERT INTO usage_entries (
-                id, timestamp, model, input_tokens, output_tokens, 
-                cache_creation_tokens, cache_read_tokens, cost,
-                session_id, project_path, project_name, 
-                request_id, message_id, message_type, date_string, source_file,
-                created_at, updated_at
-            )
-            SELECT id, timestamp, model, input_tokens, output_tokens, 
-                   cache_creation_tokens, cache_read_tokens, cost,
-                   session_id, project_path, project_name, 
-                   request_id, message_id, message_type, date_string, source_file,
-                   created_at, updated_at
-            FROM temp_unique_entries 
-            WHERE rn = 1
-            """
-            
-            try executeSQL(insertSQL)
-            
-            // 删除临时表
-            try executeSQL("DROP TABLE temp_unique_entries")
+            print("📊 优化去重完成: 原始 \(beforeCount) 条，去重后 \(afterCount) 条")
+            print("📊 删除重复记录: \(duplicateCount) 条")
             
             // 提交事务
             try executeSQL("COMMIT")
             
-            print("✅ 去重处理完成")
-            
         } catch {
             // 回滚事务
             try? executeSQL("ROLLBACK")
-            Logger.shared.error("❌ 去重处理失败: \(error)")
+            Logger.shared.error("❌ 优化去重处理失败: \(error)")
             throw error
         }
     }

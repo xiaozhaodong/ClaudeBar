@@ -444,17 +444,12 @@ class HybridUsageService: UsageServiceProtocol {
         
         Logger.shared.info("✅ 数据插入完成: \(insertResult.totalInserted)/\(insertResult.totalEntries) 条记录")
         
-        // 步骤 4: 修复日期字符串（与测试文件完全一致）
-        progressCallback?(0.7, "修复日期字符串...")
-        try database.updateAllDateStrings()
-        Logger.shared.info("✅ 日期字符串修复完成")
-        
-        // 步骤 5: 去重处理（与测试文件完全一致）
+        // 步骤 4: 去重处理（日期字符串已在插入时处理，无需单独修复）
         progressCallback?(0.8, "去重处理...")
         try database.deduplicateEntries()
         Logger.shared.info("✅ 去重处理完成")
         
-        // 步骤 6: 生成统计汇总（与测试文件完全一致）
+        // 步骤 5: 生成统计汇总
         progressCallback?(0.9, "生成统计汇总...")
         try database.generateAllStatistics()
         Logger.shared.info("✅ 统计汇总生成完成")
@@ -523,7 +518,8 @@ class HybridUsageService: UsageServiceProtocol {
         return jsonlFiles
     }
     
-    /// 解析并插入 JSONL 文件数据
+    /// 并行解析并插入 JSONL 文件数据
+    /// 使用并发处理提升文件解析性能，同时保持数据库插入的线程安全
     private func parseAndInsertJSONLFiles(
         _ jsonlFiles: [URL],
         startProgress: Double,
@@ -536,55 +532,69 @@ class HybridUsageService: UsageServiceProtocol {
         var filesWithData = 0
         var emptyFiles = 0
         
-        for (index, fileURL) in jsonlFiles.enumerated() {
-            do {
-                let fileName = fileURL.lastPathComponent
-                let fileProgress = startProgress + (Double(index) / Double(jsonlFiles.count)) * progressRange
-                progressCallback?(fileProgress, "处理文件: \(fileName)")
-                
-                // 检查文件大小
-                let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
-                let fileSize = attributes[.size] as? Int64 ?? 0
-                
-                if fileSize == 0 {
-                    emptyFiles += 1
-                    Logger.shared.debug("跳过空文件: \(fileName)")
-                    continue
+        // 分批处理文件以控制并发度
+        let batchSize = min(4, max(1, jsonlFiles.count / 10)) // 控制并发数量
+        let batches = jsonlFiles.chunked(into: batchSize)
+        
+        for (batchIndex, batch) in batches.enumerated() {
+            // 并行解析当前批次的文件
+            let parseResults = await withTaskGroup(of: FileParseResult.self) { group in
+                for fileURL in batch {
+                    group.addTask {
+                        await self.parseFileAsync(fileURL)
+                    }
                 }
                 
-                let modificationDate = attributes[.modificationDate] as? Date ?? Date()
-                
-                // 记录文件处理状态
-                try database.recordFileProcessing(fileURL, fileSize: fileSize, lastModified: modificationDate)
-                
-                // 解析 JSONL 文件
-                let entries = try await parseJSONLFile(fileURL)
-                totalEntries += entries.count
-                
-                if !entries.isEmpty {
-                    let inserted = try database.insertUsageEntries(entries)
-                    totalInserted += inserted
-                    filesWithData += 1
-                    Logger.shared.debug("文件 \(fileName): 解析 \(entries.count) 条，插入 \(inserted) 条")
-                } else {
-                    emptyFiles += 1
-                    Logger.shared.debug("文件 \(fileName): 无有效数据")
+                var results: [FileParseResult] = []
+                for await result in group {
+                    results.append(result)
                 }
-                
-                // 更新文件处理完成状态
-                try database.updateFileProcessingCompleted(fileURL, entryCount: entries.count)
-                
-                // 定期让出 CPU 时间
-                if index % 10 == 0 {
-                    await Task.yield()
-                }
-                
-            } catch {
-                Logger.shared.error("❌ 处理文件失败: \(fileURL.lastPathComponent) - \(error)")
-                emptyFiles += 1
-                // 继续处理其他文件，不因单个文件失败而中断整个过程
-                continue
+                return results
             }
+            
+            // 串行插入解析结果以保证数据库安全
+            for (fileIndex, result) in parseResults.enumerated() {
+                let overallIndex = batchIndex * batchSize + fileIndex
+                let fileProgress = startProgress + (Double(overallIndex) / Double(jsonlFiles.count)) * progressRange
+                progressCallback?(fileProgress, "插入文件: \(result.fileName)")
+                
+                do {
+                    if case .success(let entries, let fileSize, let modificationDate) = result.parseResult {
+                        // 记录文件处理状态
+                        try database.recordFileProcessing(result.fileURL, fileSize: fileSize, lastModified: modificationDate)
+                        
+                        totalEntries += entries.count
+                        
+                        if !entries.isEmpty {
+                            let inserted = try database.insertUsageEntries(entries)
+                            totalInserted += inserted
+                            filesWithData += 1
+                            Logger.shared.debug("文件 \(result.fileName): 解析 \(entries.count) 条，插入 \(inserted) 条")
+                        } else {
+                            emptyFiles += 1
+                            Logger.shared.debug("文件 \(result.fileName): 无有效数据")
+                        }
+                        
+                        // 更新文件处理完成状态
+                        try database.updateFileProcessingCompleted(result.fileURL, entryCount: entries.count)
+                        
+                    } else if case .empty = result.parseResult {
+                        emptyFiles += 1
+                        Logger.shared.debug("跳过空文件: \(result.fileName)")
+                        
+                    } else if case .error(let error) = result.parseResult {
+                        Logger.shared.error("❌ 处理文件失败: \(result.fileName) - \(error)")
+                        emptyFiles += 1
+                    }
+                    
+                } catch {
+                    Logger.shared.error("❌ 插入文件数据失败: \(result.fileName) - \(error)")
+                    emptyFiles += 1
+                }
+            }
+            
+            // 批次间让出 CPU 时间
+            await Task.yield()
         }
         
         return InsertionResult(
@@ -594,6 +604,43 @@ class HybridUsageService: UsageServiceProtocol {
             filesWithData: filesWithData,
             emptyFiles: emptyFiles
         )
+    }
+    
+    /// 异步解析单个文件
+    private func parseFileAsync(_ fileURL: URL) async -> FileParseResult {
+        do {
+            let fileName = fileURL.lastPathComponent
+            
+            // 检查文件大小
+            let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+            let fileSize = attributes[.size] as? Int64 ?? 0
+            
+            if fileSize == 0 {
+                return FileParseResult(
+                    fileURL: fileURL,
+                    fileName: fileName,
+                    parseResult: .empty
+                )
+            }
+            
+            let modificationDate = attributes[.modificationDate] as? Date ?? Date()
+            
+            // 解析 JSONL 文件
+            let entries = try await parseJSONLFile(fileURL)
+            
+            return FileParseResult(
+                fileURL: fileURL,
+                fileName: fileName,
+                parseResult: .success(entries, fileSize, modificationDate)
+            )
+            
+        } catch {
+            return FileParseResult(
+                fileURL: fileURL,
+                fileName: fileURL.lastPathComponent,
+                parseResult: .error(error)
+            )
+        }
     }
     
     /// 解析单个 JSONL 文件（直接复制测试文件中的正确逻辑）
@@ -838,6 +885,31 @@ enum MigrationError: Error, LocalizedError {
             return "数据解析错误: \(message)"
         case .databaseError(let message):
             return "数据库错误: \(message)"
+        }
+    }
+}
+
+// MARK: - 并行文件处理相关数据结构
+
+/// 文件解析结果
+struct FileParseResult {
+    let fileURL: URL
+    let fileName: String
+    let parseResult: ParseResult
+}
+
+/// 解析结果枚举
+enum ParseResult {
+    case success([UsageEntry], Int64, Date)  // entries, fileSize, modificationDate
+    case empty
+    case error(Error)
+}
+
+/// Array扩展：分块处理
+extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        return stride(from: 0, to: count, by: size).map {
+            Array(self[$0..<Swift.min($0 + size, count)])
         }
     }
 }
