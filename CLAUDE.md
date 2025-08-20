@@ -11,9 +11,17 @@ ClaudeBar 是一个 macOS 菜单栏应用，集成了 Claude CLI API 端点切�
 - **主窗口界面**: 提供完整的桌面界面，包含所有功能模块的导航
 - **替代工具**: 替代原有的 `switch-claude.sh` 脚本功能，提供更好的用户体验
 
-## 最新更新 (2025-08-19)
+## 最新更新 (2025-08-20)
 
-### 使用统计数据准确性修复 v2.1
+### 定时器冲突修复和自动同步稳定性提升 v2.2
+- **修复定时器冲突**: 解决 ProcessService (5秒) 与 AutoSyncService (5分钟) 在主线程 RunLoop 中的竞争问题
+- **升级定时器架构**: 将 AutoSyncService 从 Timer 升级到 DispatchSourceTimer，在后台队列执行避免主线程阻塞
+- **提升同步可靠性**: 自动同步定时器现在能稳定触发，不再被进程监控的高频任务干扰
+- **修复间隔变更**: 解决同步间隔修改时的"定时器已在运行"阻塞问题，确保新间隔立即生效
+- **增强调试能力**: 添加详细的定时器触发日志和健康状态检查，便于问题诊断
+- **线程安全优化**: 使用 DispatchSourceTimer 的现代并发模式，提升系统稳定性
+
+### 使用统计数据准确性修复 v2.1 (2025-08-19)
 - **修复Token统计不准确**: 将"全量同步"按钮从 `AutoSyncService.performFullSyncInternal()` 路由到正确的 `HybridUsageService.performFullDataMigration()`
 - **修复成本计算错误**: 将成本计算从使用原始 JSONL 数据改为使用 `PricingModel.calculateCost()` 进行准确计算
 - **修复数据库事务错误**: 解决 `UsageStatisticsDatabase.clearAllDataAndResetSequencesInternal()` 中 "cannot VACUUM from within a transaction" 错误，将 VACUUM 操作移出事务
@@ -308,11 +316,24 @@ EOF
 5. **增加错误处理**: 在相应的错误枚举中添加新类型
 6. **调整权限**: 修改 `ClaudeBar.entitlements` 文件
 7. **更新图标**: 编辑 `Assets.xcassets/AppIcon.appiconset`
-8. **优化同步性能**: 关注 `AutoSyncService.swift` 的 `performFullSyncUsingMigration` 路由到 `HybridUsageService.performFullDataMigration` 和 `UsageStatisticsDatabase.swift` 的数据库操作优化
-9. **窗口行为修改**: 在 `AppDelegate.swift` 中修改窗口管理逻辑，特别是 `showMainWindow()` 和 `hideMainWindow()` 方法
-10. **配置管理优化**: 修改 `SQLiteConfigService.swift` 和 `DatabaseManager.swift` 实现新功能
-11. **无感刷新调优**: 在 `AppState.swift` 中调整本地状态同步逻辑
-12. **数据库表结构修改**: 在 `UsageStatisticsDatabase.swift` 中更新表定义，确保使用 BIGINT 和 created_at/updated_at 字段
+8. **优化自动同步**: 修改 `AutoSyncService.swift` 中的定时器逻辑和同步策略
+9. **修复定时器冲突**: 优先使用 DispatchSourceTimer 而非 Timer，避免主线程 RunLoop 竞争
+10. **窗口行为修改**: 在 `AppDelegate.swift` 中修改窗口管理逻辑，特别是 `showMainWindow()` 和 `hideMainWindow()` 方法
+11. **配置管理优化**: 修改 `SQLiteConfigService.swift` 和 `DatabaseManager.swift` 实现新功能
+12. **无感刷新调优**: 在 `AppState.swift` 中调整本地状态同步逻辑
+13. **数据库表结构修改**: 在 `UsageStatisticsDatabase.swift` 中更新表定义，确保使用 BIGINT 和 created_at/updated_at 字段
+
+### 重要经验教训
+
+#### 定时器冲突诊断 (2025-08-20)
+- **症状**: 定时任务不触发，日志缺失，间隔变更无效
+- **根因**: 多个定时器在主线程 RunLoop 中竞争，高频定时器阻塞低频定时器
+- **诊断方法**: 
+  1. 检查是否存在多个 Timer 实例
+  2. 分析定时器频率差异 (ProcessService 5秒 vs AutoSyncService 5分钟)
+  3. 查看主线程阻塞情况
+- **解决方案**: 使用 DispatchSourceTimer 替代 Timer，在后台队列执行
+- **预防措施**: 新定时器优先使用 DispatchSourceTimer，避免主线程 RunLoop 竞争
 
 ### 发布流程
 1. 运行 `./verify.sh` 验证代码和项目结构
@@ -321,6 +342,14 @@ EOF
 4. 可选择创建 DMG 安装包（需要 create-dmg 工具）
 
 ### 关键调试点
+
+#### 自动同步定时器功能 (v2.2 修复)
+- **定时器类型**: `AutoSyncService.swift:186` - 使用 DispatchSourceTimer 避免主线程冲突
+- **定时器创建**: `AutoSyncService.swift:766-811` - setupAutoSyncTimer() 创建和配置定时器
+- **定时器触发**: `AutoSyncService.swift:814-893` - handleTimerFired() 处理触发事件
+- **间隔变更**: `AutoSyncService.swift:934-937` - 先停止再启动避免阻塞问题
+- **冲突避免**: 后台队列 syncQueue 执行，不与 ProcessService (5秒) 主线程定时器竞争
+- **调试日志**: 查找 "🔥 DispatchTimer 触发" 确认定时器正常工作
 
 #### SQLite 配置管理功能
 - 数据库操作: `DatabaseManager.swift:createConfig/updateConfig/deleteConfig`

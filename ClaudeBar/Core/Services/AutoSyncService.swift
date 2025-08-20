@@ -162,16 +162,12 @@ class AutoSyncService: ObservableObject, AutoSyncServiceProtocol {
             return "定时器未运行"
         }
         
-        guard let timer = syncTimer else {
+        guard syncTimer != nil else {
             return "定时器不存在"
         }
         
-        if !timer.isValid {
-            return "定时器已失效"
-        }
-        
         let stats = timerValidation.getStatsSummary()
-        return "定时器运行正常\n\(stats)"
+        return "DispatchSourceTimer 运行正常\n\(stats)"
     }
     
     // MARK: - Dependencies
@@ -182,8 +178,8 @@ class AutoSyncService: ObservableObject, AutoSyncServiceProtocol {
     
     // MARK: - Private Properties
     
-    /// 同步定时器
-    private var syncTimer: Timer?
+    /// 同步定时器（使用 DispatchSourceTimer 避免主线程 RunLoop 冲突）
+    private var syncTimer: DispatchSourceTimer?
     
     /// 定时器有效性检查
     private var timerValidation = TimerValidation()
@@ -245,7 +241,7 @@ class AutoSyncService: ObservableObject, AutoSyncServiceProtocol {
     deinit {
         // 清理资源
         currentSyncTask?.cancel()
-        syncTimer?.invalidate()
+        syncTimer?.cancel()
         cancellables.removeAll()
         logger.info("AutoSyncService 已释放")
     }
@@ -267,7 +263,7 @@ class AutoSyncService: ObservableObject, AutoSyncServiceProtocol {
         
         // 移除同步锁，避免主线程阻塞
         // 使用简单的状态检查代替锁
-        if isAutoSyncRunning && syncTimer != nil && syncTimer!.isValid {
+        if isAutoSyncRunning && syncTimer != nil {
             logger.syncSkipped("自动同步启动", reason: "定时器已在运行")
             return
         }
@@ -333,9 +329,7 @@ class AutoSyncService: ObservableObject, AutoSyncServiceProtocol {
         
         // 停止并清理定时器
         if let timer = syncTimer {
-            if timer.isValid {
-                timer.invalidate()
-            }
+            timer.cancel()
             syncTimer = nil
         }
         
@@ -775,15 +769,29 @@ class AutoSyncService: ObservableObject, AutoSyncServiceProtocol {
             return
         }
         
-        // 在主线程创建定时器，确保UI更新同步
-        syncTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] timer in
+        // 使用 DispatchSourceTimer 避免与 ProcessService 的 Timer 冲突
+        let timer = DispatchSource.makeTimerSource(queue: syncQueue)
+        syncTimer = timer
+        
+        // 设置定时器间隔和容差
+        let intervalNanos = UInt64(interval * 1_000_000_000) // 转换为纳秒
+        let toleranceNanos = UInt64(min(interval * 0.1, 30.0) * 1_000_000_000) // 最大容差30秒
+        
+        timer.schedule(deadline: .now() + interval, repeating: interval, leeway: .nanoseconds(Int(toleranceNanos)))
+        
+        // 设置定时器事件处理
+        timer.setEventHandler { [weak self] in
             Task { @MainActor [weak self] in
-                await self?.handleTimerFired(timer: timer)
+                self?.logger.info("🔥 DispatchTimer 触发，准备执行全量同步")
+                await self?.handleTimerFired()
             }
         }
         
-        // 设置定时器容差，优化电池使用
-        syncTimer?.tolerance = min(interval * 0.1, 30.0) // 最大容差30秒
+        // 启动定时器
+        timer.resume()
+        
+        // 确认定时器创建成功
+        logger.info("✅ DispatchSourceTimer 创建成功并已启动")
         
         // 记录定时器验证信息
         timerValidation.recordTimerCreation(interval: interval)
@@ -791,14 +799,16 @@ class AutoSyncService: ObservableObject, AutoSyncServiceProtocol {
         // 计算并设置下次同步时间
         updateNextSyncTime()
         
-        logger.info("同步定时器已启动，间隔: \(userPreferences.currentSyncInterval.displayName)，下次执行: \(nextSyncTime?.formatted(date: .abbreviated, time: .shortened) ?? "未知")")
+        // 计算显示用的下次同步时间（避免竞态条件）
+        let nextSyncDisplay = Date().addingTimeInterval(interval)
+        logger.info("同步定时器已启动，间隔: \(userPreferences.currentSyncInterval.displayName)，下次执行: \(nextSyncDisplay.formatted(date: .abbreviated, time: .shortened))")
     }
     
     /// 处理定时器触发事件
-    private func handleTimerFired(timer: Timer) async {
+    private func handleTimerFired() async {
         // 验证定时器仍然有效
-        guard timer == syncTimer && timer.isValid else {
-            logger.warning("收到无效定时器触发，忽略")
+        guard let timer = syncTimer else {
+            logger.warning("收到定时器触发但定时器不存在，忽略")
             return
         }
         
@@ -879,11 +889,12 @@ class AutoSyncService: ObservableObject, AutoSyncServiceProtocol {
     /// 更新下次同步时间
     private func updateNextSyncTime() {
         let interval = TimeInterval(userPreferences.syncInterval)
+        let nextTime = Date().addingTimeInterval(interval)
+        
         Task { @MainActor in
-            nextSyncTime = Date().addingTimeInterval(interval)
+            nextSyncTime = nextTime
         }
         
-        let nextTime = Date().addingTimeInterval(interval)
         logger.debug("下次同步时间更新为: \(nextTime.formatted(date: .abbreviated, time: .shortened))")
     }
     
@@ -929,6 +940,10 @@ class AutoSyncService: ObservableObject, AutoSyncServiceProtocol {
                     if self.isAutoSyncRunning && self.userPreferences.autoSyncEnabled {
                         self.logger.info("重新启动定时器以应用新的同步间隔")
                         do {
+                            // 先停止现有定时器，再启动新定时器以应用新间隔
+                            self.logger.debug("停止现有定时器...")
+                            await self.stopAutoSync()
+                            self.logger.debug("启动新定时器...")
                             try await self.startAutoSync()
                         } catch {
                             self.logger.syncError("响应间隔变更重启自动同步", error: error)
@@ -987,7 +1002,7 @@ class AutoSyncService: ObservableObject, AutoSyncServiceProtocol {
         let needsRestart = timerValidation.shouldRestartTimerAfterBackground()
         
         if isAutoSyncRunning && userPreferences.autoSyncEnabled {
-            if let timer = syncTimer, timer.isValid {
+            if syncTimer != nil {
                 if needsRestart {
                     logger.info("应用从后台恢复，重启自动同步定时器")
                     Task { @MainActor [weak self] in
@@ -1001,12 +1016,12 @@ class AutoSyncService: ObservableObject, AutoSyncServiceProtocol {
                     logger.info("应用从后台恢复，定时器状态正常")
                 }
             } else {
-                logger.warning("应用从后台恢复，发现定时器已失效，重新启动")
+                logger.warning("应用从后台恢复，发现定时器不存在，重新启动")
                 Task { @MainActor [weak self] in
                     do {
                         try await self?.startAutoSync()
                     } catch {
-                        self?.logger.syncError("恢复失效定时器", error: error)
+                        self?.logger.syncError("恢复缺失定时器", error: error)
                     }
                 }
             }
@@ -1051,9 +1066,9 @@ class AutoSyncService: ObservableObject, AutoSyncServiceProtocol {
     func checkTimerHealth() -> Bool {
         
         guard isAutoSyncRunning else { return false }
-        guard let timer = syncTimer else { return false }
+        guard syncTimer != nil else { return false }
         
-        return timer.isValid
+        return true
     }
     
     /// 获取详细的自动同步状态信息
