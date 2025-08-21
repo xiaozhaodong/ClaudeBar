@@ -11,9 +11,21 @@ ClaudeBar 是一个 macOS 菜单栏应用，集成了 Claude CLI API 端点切�
 - **主窗口界面**: 提供完整的桌面界面，包含所有功能模块的导航
 - **替代工具**: 替代原有的 `switch-claude.sh` 脚本功能，提供更好的用户体验
 
-## 最新更新 (2025-08-20)
+## 最新更新 (2025-08-21)
 
-### 定时器冲突修复和自动同步稳定性提升 v2.2
+### 近三天统计UI界面优化 v2.3
+- **界面布局重构**: 将近三天使用数据移至总体统计上方，提升最新数据的快速访问性
+- **界面简化设计**: 移除"最近三天"标题和时钟图标，使数据展示更直接、视觉更聚焦
+- **会话统计新增**: 新增会话数量显示，采用四列布局（日期、会话、成本、Token）
+- **视觉一致性**: 统一蓝色边框样式，与总体统计保持视觉一致性
+- **精细间距控制**: 优化各列间距（日期-会话18pt、会话-成本10pt、成本-Token10pt）
+- **响应式布局**: 精确控制列宽（日期38pt、会话35pt、成本80pt、Token自适应）
+- **字体优化**: 提升字体大小（日期标签12pt、数据文字11pt）增强可读性
+- **颜色指示器**: 使用不同颜色区分天数（今天-蓝色、昨天-橙色、前天-灰色）
+- **数据模型扩展**: 扩展RecentDayData模型支持会话统计，集成数据库查询
+- **交互体验**: 保留hover效果，支持大数值格式化和空值处理
+
+### 定时器冲突修复和自动同步稳定性提升 v2.2 (2025-08-20)
 - **修复定时器冲突**: 解决 ProcessService (5秒) 与 AutoSyncService (5分钟) 在主线程 RunLoop 中的竞争问题
 - **升级定时器架构**: 将 AutoSyncService 从 Timer 升级到 DispatchSourceTimer，在后台队列执行避免主线程阻塞
 - **提升同步可靠性**: 自动同步定时器现在能稳定触发，不再被进程监控的高频任务干扰
@@ -322,6 +334,7 @@ EOF
 11. **配置管理优化**: 修改 `SQLiteConfigService.swift` 和 `DatabaseManager.swift` 实现新功能
 12. **无感刷新调优**: 在 `AppState.swift` 中调整本地状态同步逻辑
 13. **数据库表结构修改**: 在 `UsageStatisticsDatabase.swift` 中更新表定义，确保使用 BIGINT 和 created_at/updated_at 字段
+14. **近三天统计UI优化**: 修改 `MenuBarView.swift` 中的 `RecentDaysUsageView` 和 `RecentDayRow` 组件，调整布局间距和数据展示
 
 ### 重要经验教训
 
@@ -377,6 +390,14 @@ EOF
 #### 进程监控功能
 - 进程检测: `ProcessService.swift:checkClaudeProcess`
 - 状态更新: `AppState.swift:claudeProcessStatus`
+
+#### 近三天统计UI界面功能 (v2.3 新增)
+- 界面组件: `MenuBarView.swift:RecentDaysUsageView` - 近三天数据展示容器
+- 数据行组件: `MenuBarView.swift:RecentDayRow` - 单日数据行，四列布局设计
+- 数据模型: `MenuBarView.swift:RecentDayData` - 扩展支持会话统计
+- 间距控制: 手动HStack间距管理，精确控制视觉效果
+- 颜色指示: 天数标签颜色编码（蓝/橙/灰），增强视觉识别
+- 响应式设计: 固定宽度+自适应相结合的布局策略
 
 #### 窗口管理功能
 - 窗口状态控制: `AppState.swift:showingMainWindow`
