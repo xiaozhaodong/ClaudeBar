@@ -925,6 +925,9 @@ struct UsageStatsDisplayCard: View {
     
     var body: some View {
         VStack(spacing: 8) {
+            // 最近三天统计
+            RecentDaysUsageView(statistics: statistics)
+            
             // 总体统计
             UsageStatsContent(statistics: statistics)
                 .padding(12)
@@ -936,9 +939,6 @@ struct UsageStatsDisplayCard: View {
                                 .stroke(Color.blue.opacity(0.2), lineWidth: 1)
                         )
                 )
-            
-            // 最近三天统计
-            RecentDaysUsageView(statistics: statistics)
         }
         .onTapGesture {
             // 点击统计卡片打开主窗口的使用统计页面
@@ -1026,34 +1026,20 @@ struct RecentDaysUsageView: View {
     
     var body: some View {
         VStack(spacing: 6) {
-            // 标题行
-            HStack {
-                Text("最近三天")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.secondary)
-                
-                Spacer()
-                
-                Image(systemName: "clock.arrow.circlepath")
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-            }
-            .padding(.horizontal, 12)
-            
             // 每日数据
-            VStack(spacing: 4) {
+            VStack(spacing: 3) { // 减少行间距
                 ForEach(getRecentDaysData(), id: \.dayLabel) { dayData in
                     RecentDayRow(dayData: dayData)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 10) // 减少水平padding
+            .padding(.vertical, 6) // 减少垂直padding
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color(.controlBackgroundColor))
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.gray.opacity(0.15), lineWidth: 1)
+                            .stroke(Color.blue.opacity(0.2), lineWidth: 1) // 修改为与下方统计一致的蓝色边框
                     )
             )
         }
@@ -1098,11 +1084,21 @@ struct RecentDaysUsageView: View {
                 dayLabel: dayLabel,
                 date: dateString,
                 cost: dayUsage?.totalCost ?? 0,
-                tokens: dayUsage?.totalTokens ?? 0
+                tokens: dayUsage?.totalTokens ?? 0,
+                sessions: getDaySessionCount(for: dateString)
             ))
         }
         
         return result
+    }
+    
+    // 从统计数据中获取指定日期的会话数
+    private func getDaySessionCount(for dateString: String) -> Int {
+        // 从byDate数据中获取会话数
+        if let dayUsage = statistics.byDate.first(where: { $0.date == dateString }) {
+            return dayUsage.sessionCount
+        }
+        return 0
     }
 }
 
@@ -1112,6 +1108,7 @@ struct RecentDayData {
     let date: String
     let cost: Double
     let tokens: Int
+    let sessions: Int
     
     var formattedCost: String {
         if cost == 0 {
@@ -1131,6 +1128,14 @@ struct RecentDayData {
             return "\(tokens)"
         }
     }
+    
+    var formattedSessions: String {
+        if sessions == 0 {
+            return "-"
+        } else {
+            return "\(sessions)"
+        }
+    }
 }
 
 // 最近一天的数据行
@@ -1139,52 +1144,68 @@ struct RecentDayRow: View {
     @State private var isHovered = false
     
     var body: some View {
-        HStack(spacing: 12) {
-            // 日期标签
-            HStack(spacing: 6) {
+        HStack(spacing: 0) { // 使用0间距，手动控制
+            // 日期标签 - 进一步压缩
+            HStack(spacing: 4) {
                 Circle()
                     .fill(dayLabelColor)
-                    .frame(width: 6, height: 6)
+                    .frame(width: 5, height: 5)
                 
                 Text(dayData.dayLabel)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.primary)
-                    .frame(minWidth: 32, alignment: .leading)
             }
+            .frame(width: 38, alignment: .leading) // 再减少4pt
             
             Spacer()
+                .frame(width: 18) // 日期和会话间的固定间距，从8pt增加到12pt
+            
+            // 会话数
+            HStack(spacing: 2) {
+                Image(systemName: "message.circle.fill")
+                    .font(.system(size: 9))
+                    .foregroundColor(.blue)
+                
+                Text(dayData.formattedSessions)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(dayData.sessions > 0 ? .primary : .secondary)
+            }
+            .frame(width: 35, alignment: .leading) // 稍微压缩
+            
+            // 会话和成本之间的间距
+            Spacer()
+                .frame(width: 10)
             
             // 成本
-            HStack(spacing: 4) {
+            HStack(spacing: 2) {
                 Image(systemName: "dollarsign.circle.fill")
-                    .font(.system(size: 10))
+                    .font(.system(size: 9))
                     .foregroundColor(.green)
                 
                 Text(dayData.formattedCost)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(dayData.cost > 0 ? .primary : .secondary)
-                    .frame(minWidth: 45, alignment: .trailing)
             }
+            .frame(width: 80, alignment: .leading) // 保持价格显示空间
             
-            // 分隔线
-            Rectangle()
-                .fill(Color.gray.opacity(0.2))
-                .frame(width: 1, height: 12)
+            // 成本和Token间的间距
+            Spacer()
+                .frame(width: 10)
             
-            // 令牌数
-            HStack(spacing: 4) {
+            // 令牌数 - 占用剩余空间
+            HStack(spacing: 2) {
                 Image(systemName: "cpu.fill")
-                    .font(.system(size: 10))
+                    .font(.system(size: 9))
                     .foregroundColor(.purple)
                 
                 Text(dayData.formattedTokens)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(dayData.tokens > 0 ? .primary : .secondary)
-                    .frame(minWidth: 45, alignment: .trailing)
             }
+            .frame(maxWidth: .infinity, alignment: .leading) // 占用剩余空间
         }
-        .padding(.vertical, 6)
-        .padding(.horizontal, 8)
+        .padding(.vertical, 4) // 减少垂直padding
+        .padding(.horizontal, 6) // 减少水平padding
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(isHovered ? Color.gray.opacity(0.08) : Color.clear)
