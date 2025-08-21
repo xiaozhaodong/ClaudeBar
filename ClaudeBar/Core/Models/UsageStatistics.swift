@@ -179,12 +179,14 @@ struct DailyUsage: Codable, Identifiable {
     let date: String
     let totalCost: Double
     let totalTokens: Int
+    let sessionCount: Int
     let modelsUsed: [String]
     
     private enum CodingKeys: String, CodingKey {
         case date
         case totalCost = "total_cost"
         case totalTokens = "total_tokens"
+        case sessionCount = "session_count"
         case modelsUsed = "models_used"
     }
     

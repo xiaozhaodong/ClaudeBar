@@ -1112,6 +1112,7 @@ extension UsageStatisticsDatabase {
             date_string,
             SUM(cost) as total_cost,
             SUM(total_tokens) as total_tokens,
+            COUNT(DISTINCT session_id) as session_count,
             GROUP_CONCAT(DISTINCT model) as models_used
         FROM usage_entries \(whereClause)
         GROUP BY date_string
@@ -1218,9 +1219,10 @@ extension UsageStatisticsDatabase {
             let date = String(cString: datePtr)
             let totalCost = sqlite3_column_double(statement, 1)
             let totalTokens = Int(sqlite3_column_int64(statement, 2))
+            let sessionCount = Int(sqlite3_column_int(statement, 3))
             
             var modelsUsed: [String] = []
-            if let modelsPtr = sqlite3_column_text(statement, 3) {
+            if let modelsPtr = sqlite3_column_text(statement, 4) {
                 let modelsString = String(cString: modelsPtr)
                 modelsUsed = modelsString.components(separatedBy: ",")
             }
@@ -1229,6 +1231,7 @@ extension UsageStatisticsDatabase {
                 date: date,
                 totalCost: totalCost,
                 totalTokens: totalTokens,
+                sessionCount: sessionCount,
                 modelsUsed: modelsUsed
             )
             
@@ -1466,6 +1469,7 @@ extension UsageStatisticsDatabase {
             date_string,
             SUM(cost) as total_cost,
             SUM(total_tokens) as total_tokens,
+            COUNT(DISTINCT session_id) as session_count,
             GROUP_CONCAT(DISTINCT model) as models_used
         FROM usage_entries \(whereClause)
         GROUP BY date_string
@@ -1496,9 +1500,10 @@ extension UsageStatisticsDatabase {
             let date = String(cString: datePtr)
             let totalCost = sqlite3_column_double(statement, 1)
             let totalTokens = Int(sqlite3_column_int64(statement, 2))
+            let sessionCount = Int(sqlite3_column_int(statement, 3))
             
             var modelsUsed: [String] = []
-            if let modelsPtr = sqlite3_column_text(statement, 3) {
+            if let modelsPtr = sqlite3_column_text(statement, 4) {
                 let modelsString = String(cString: modelsPtr)
                 modelsUsed = modelsString.components(separatedBy: ",")
             }
@@ -1507,6 +1512,7 @@ extension UsageStatisticsDatabase {
                 date: date,
                 totalCost: totalCost,
                 totalTokens: totalTokens,
+                sessionCount: sessionCount,
                 modelsUsed: modelsUsed
             )
             

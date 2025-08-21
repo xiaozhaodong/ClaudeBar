@@ -599,11 +599,11 @@ struct UsageChart: View {
 
 #Preview {
     let sampleData = [
-        DailyUsage(date: "2024-01-01", totalCost: 0.05, totalTokens: 1000, modelsUsed: ["claude-4-sonnet"]),
-        DailyUsage(date: "2024-01-02", totalCost: 0.12, totalTokens: 2400, modelsUsed: ["claude-4-sonnet", "claude-3-haiku"]),
-        DailyUsage(date: "2024-01-03", totalCost: 0.08, totalTokens: 1600, modelsUsed: ["claude-4-sonnet"]),
-        DailyUsage(date: "2024-01-04", totalCost: 0.15, totalTokens: 3000, modelsUsed: ["claude-4-opus"]),
-        DailyUsage(date: "2024-01-05", totalCost: 0.03, totalTokens: 600, modelsUsed: ["claude-3-haiku"])
+        DailyUsage(date: "2024-01-01", totalCost: 0.05, totalTokens: 1000, sessionCount: 3, modelsUsed: ["claude-4-sonnet"]),
+        DailyUsage(date: "2024-01-02", totalCost: 0.12, totalTokens: 2400, sessionCount: 5, modelsUsed: ["claude-4-sonnet", "claude-3-haiku"]),
+        DailyUsage(date: "2024-01-03", totalCost: 0.08, totalTokens: 1600, sessionCount: 2, modelsUsed: ["claude-4-sonnet"]),
+        DailyUsage(date: "2024-01-04", totalCost: 0.15, totalTokens: 3000, sessionCount: 7, modelsUsed: ["claude-4-opus"]),
+        DailyUsage(date: "2024-01-05", totalCost: 0.03, totalTokens: 600, sessionCount: 1, modelsUsed: ["claude-3-haiku"])
     ]
     
     TimelineTabView(dailyUsage: sampleData)

@@ -766,6 +766,7 @@ private class DailyUsageBuilder {
             date: date,
             totalCost: totalCost,
             totalTokens: totalTokens,
+            sessionCount: 0, // 传统UsageService不支持会话统计，使用0
             modelsUsed: Array(modelsUsed)
         )
     }
