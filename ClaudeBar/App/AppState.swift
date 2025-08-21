@@ -63,6 +63,9 @@ class AppState: ObservableObject {
             .receive(on: DispatchQueue.main)
             .assign(to: \.claudeProcessStatus, on: self)
             .store(in: &cancellables)
+        
+        // 监听数据同步完成通知，自动更新菜单栏统计数据
+        setupSyncNotificationListeners()
             
         // 配置自动同步服务的初始状态
         configureAutoSyncService()
@@ -98,6 +101,45 @@ class AppState: ObservableObject {
         
         // 监听自动同步设置变化，已经在AutoSyncService内部处理
         // 这里不需要额外的监听逻辑
+    }
+    
+    /// 设置同步通知监听器
+    /// 监听数据同步完成通知，自动更新菜单栏统计数据
+    private func setupSyncNotificationListeners() {
+        // 监听数据同步完成通知
+        NotificationCenter.default
+            .publisher(for: .usageDataSyncDidComplete)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] notification in
+                self?.handleSyncCompleted(notification)
+            }
+            .store(in: &cancellables)
+            
+        Logger.shared.info("AppState: 已设置同步通知监听器")
+    }
+    
+    /// 处理同步完成通知
+    /// 当数据同步完成时自动刷新使用统计数据
+    /// - Parameter notification: 同步完成通知
+    private func handleSyncCompleted(_ notification: Notification) {
+        let userInfo = notification.userInfo
+        let success = userInfo?["success"] as? Bool ?? false
+        let itemsCount = userInfo?["itemsCount"] as? Int ?? 0
+        
+        Logger.shared.info("AppState: 收到同步完成通知，成功: \(success), 处理项目: \(itemsCount)")
+        
+        // 只有同步成功时才自动刷新统计数据
+        if success {
+            Task {
+                await refreshUsageStatistics()
+                Logger.shared.info("AppState: 同步完成后已自动刷新使用统计数据")
+            }
+        } else {
+            // 同步失败时记录错误信息
+            if let error = userInfo?["error"] {
+                Logger.shared.warning("AppState: 同步失败，未刷新统计数据，错误: \(error)")
+            }
+        }
     }
     
     /// 检查并请求 ~/.claude 目录访问权限（已简化）
