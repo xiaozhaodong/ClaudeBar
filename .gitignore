@@ -143,3 +143,4 @@ project.pbxproj.backup*
 # Logs
 *.log
 .claude
+gemini/

@@ -1,12 +1,40 @@
 #!/usr/bin/env swift
 
+// 优化的使用统计数据迁移测试
+// 新增功能：
+// 1. jsonl_files表增加md5_hash字段，用于精确文件变更检测
+// 2. source_file字段存储完整文件路径，解决跨项目同名文件冲突问题
+// 3. 为后续增量同步提供安全的文件标识机制
+// 更新时间：2025-08-22
+
 import Foundation
 import SQLite3
+import CryptoKit
 
 // MARK: - String扩展支持正则表达式
 extension String {
     func matches(_ regex: String) -> Bool {
         return range(of: regex, options: .regularExpression) != nil
+    }
+}
+
+// MARK: - MD5计算扩展
+extension Data {
+    var md5Hash: String {
+        let digest = Insecure.MD5.hash(data: self)
+        return digest.map { String(format: "%02hhx", $0) }.joined()
+    }
+}
+
+extension URL {
+    var fileMD5: String? {
+        do {
+            let data = try Data(contentsOf: self)
+            return data.md5Hash
+        } catch {
+            print("⚠️ 计算文件MD5失败: \(self.path) - \(error.localizedDescription)")
+            return nil
+        }
     }
 }
 
@@ -104,7 +132,7 @@ struct RawJSONLEntry: Codable {
     }
     
     /// 转换为标准的使用记录（完全与项目一致）
-    func toUsageEntry(projectPath: String, sourceFile: String) -> TestUsageEntry? {
+    func toUsageEntry(projectPath: String, sourceFilePath: String) -> TestUsageEntry? {
         // 完全复制项目中 RawJSONLEntry.toUsageEntry 的逻辑
         let messageType = type ?? self.messageType ?? ""
         let usageData = usage ?? message?.usage
@@ -177,7 +205,7 @@ struct RawJSONLEntry: Codable {
             messageId: extractedMessageId,
             messageType: messageType,
             dateString: dateString,
-            sourceFile: sourceFile
+            sourceFile: sourceFilePath
         )
     }
     
@@ -533,6 +561,7 @@ class TestUsageDatabase {
             file_name TEXT NOT NULL,
             file_size INTEGER NOT NULL,
             last_modified TEXT NOT NULL,
+            md5_hash TEXT NOT NULL,
             last_processed TEXT,
             entry_count INTEGER DEFAULT 0,
             processing_status TEXT DEFAULT 'pending',
@@ -610,6 +639,7 @@ class TestUsageDatabase {
             "CREATE INDEX IF NOT EXISTS idx_jsonl_files_path ON jsonl_files(file_path)",
             "CREATE INDEX IF NOT EXISTS idx_jsonl_files_modified ON jsonl_files(last_modified)",
             "CREATE INDEX IF NOT EXISTS idx_jsonl_files_status ON jsonl_files(processing_status)",
+            "CREATE INDEX IF NOT EXISTS idx_jsonl_files_md5 ON jsonl_files(md5_hash)",
             
             "CREATE INDEX IF NOT EXISTS idx_daily_stats_date ON daily_statistics(date_string)",
             "CREATE INDEX IF NOT EXISTS idx_model_stats_composite ON model_statistics(model, date_range)",
@@ -631,7 +661,7 @@ class TestUsageDatabase {
             try executeSQL(indexSQL)
         }
         
-        print("✅ 数据库表和索引创建完成（5个表），ID序列已重置为从1开始")
+        print("✅ 数据库表和索引创建完成（5个表），支持MD5文件检测和完整路径存储，ID序列已重置为从1开始")
     }
     
     private func executeSQL(_ sql: String) throws {
@@ -874,9 +904,9 @@ class TestUsageDatabase {
     func recordFileProcessing(_ fileURL: URL, fileSize: Int64, lastModified: Date) throws {
         let insertSQL = """
         INSERT OR REPLACE INTO jsonl_files 
-        (file_path, file_name, file_size, last_modified, processing_status, 
+        (file_path, file_name, file_size, last_modified, md5_hash, processing_status, 
          created_at, updated_at)
-        VALUES (?, ?, ?, ?, 'processing', datetime('now', 'localtime'), datetime('now', 'localtime'))
+        VALUES (?, ?, ?, ?, ?, 'processing', datetime('now', 'localtime'), datetime('now', 'localtime'))
         """
         
         var statement: OpaquePointer?
@@ -891,6 +921,11 @@ class TestUsageDatabase {
         let formatter = ISO8601DateFormatter()
         let lastModifiedString = formatter.string(from: lastModified)
         
+        // 计算文件MD5值
+        guard let md5Hash = fileURL.fileMD5 else {
+            throw TestError.databaseError("计算文件MD5失败: \(fileURL.path)")
+        }
+        
         // 使用 SQLITE_TRANSIENT 确保字符串安全
         let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
         
@@ -898,6 +933,7 @@ class TestUsageDatabase {
         _ = fileURL.lastPathComponent.withCString { sqlite3_bind_text(statement, 2, $0, -1, SQLITE_TRANSIENT) }
         sqlite3_bind_int64(statement, 3, fileSize)
         _ = lastModifiedString.withCString { sqlite3_bind_text(statement, 4, $0, -1, SQLITE_TRANSIENT) }
+        _ = md5Hash.withCString { sqlite3_bind_text(statement, 5, $0, -1, SQLITE_TRANSIENT) }
         
         if sqlite3_step(statement) != SQLITE_DONE {
             let errmsg = String(cString: sqlite3_errmsg(db)!)
@@ -1441,8 +1477,8 @@ class UsageDatabaseTest {
                 // 使用与StreamingJSONLParser完全相同的解析逻辑
                 let rawEntry = try decoder.decode(RawJSONLEntry.self, from: jsonData)
                 
-                // 转换为标准使用记录（使用与项目完全一致的逻辑）
-                if let entry = rawEntry.toUsageEntry(projectPath: projectPath, sourceFile: fileURL.lastPathComponent) {
+                // 转换为标准使用记录（使用完整文件路径而非文件名）
+                if let entry = rawEntry.toUsageEntry(projectPath: projectPath, sourceFilePath: fileURL.path) {
                     entries.append(entry)
                     validLines += 1
                 } else {
@@ -1519,7 +1555,7 @@ class UsageDatabaseTest {
                 messageId: "msg-\(index + 1)",
                 messageType: "assistant",
                 dateString: dateFormatter.string(from: timestamp),
-                sourceFile: "test-session-\(data.5).jsonl"
+                sourceFile: "/test/session-\(data.5).jsonl"
             )
         }
     }
@@ -1618,7 +1654,7 @@ class UsageDatabaseTest {
                 messageId: "msg-\(index + 1)",
                 messageType: "assistant",
                 dateString: dateFormatter.string(from: timestamp),
-                sourceFile: "test-session-\(data.5).jsonl"
+                sourceFile: "/test/session-\(data.5).jsonl"
             )
         }
     }

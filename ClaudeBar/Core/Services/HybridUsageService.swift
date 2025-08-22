@@ -667,8 +667,8 @@ class HybridUsageService: UsageServiceProtocol {
                 // 解析原始JSONL数据（使用系统现有的 RawJSONLEntry）
                 let rawEntry = try decoder.decode(RawJSONLEntry.self, from: jsonData)
                 
-                // 转换为标准使用记录（与测试文件完全一致）
-                if let entry = rawEntry.toUsageEntry(projectPath: projectPath, sourceFile: fileURL.lastPathComponent) {
+                // 转换为标准使用记录（使用完整文件路径）
+                if let entry = rawEntry.toUsageEntry(projectPath: projectPath, sourceFile: fileURL.path) {
                     entries.append(entry)
                     validLines += 1
                 } else {
@@ -706,6 +706,253 @@ class HybridUsageService: UsageServiceProtocol {
         
         // 如果无法确定项目路径，返回文件所在目录
         return fileURL.deletingLastPathComponent().path
+    }
+    
+    // MARK: - 增量同步功能
+    
+    /// 执行增量数据同步（基于 jsonl_files 表的文件变更检测）
+    /// 扫描文件系统，对比数据库记录的文件状态，只处理新文件和变更的文件
+    /// - Parameters:
+    ///   - progressCallback: 进度回调 (0.0-1.0, 描述)
+    /// - Returns: 增量同步结果
+    func performIncrementalDataSync(
+        progressCallback: ((Double, String) -> Void)? = nil
+    ) async throws -> IncrementalSyncResult {
+        let startTime = CFAbsoluteTimeGetCurrent()
+        Logger.shared.info("🚀 开始执行增量数据同步")
+        
+        progressCallback?(0.0, "准备增量同步...")
+        
+        // 步骤 1: 扫描文件系统，对比数据库记录
+        progressCallback?(0.1, "扫描文件系统...")
+        let fileChangeInfo = try await findChangedFiles()
+        Logger.shared.info("📊 文件变更分析: 新文件 \(fileChangeInfo.newFiles.count) 个, 变更文件 \(fileChangeInfo.changedFiles.count) 个")
+        
+        let totalFilesToProcess = fileChangeInfo.newFiles.count + fileChangeInfo.changedFiles.count
+        
+        guard totalFilesToProcess > 0 else {
+            let result = IncrementalSyncResult(
+                totalFiles: fileChangeInfo.totalFiles,
+                newFiles: 0,
+                changedFiles: 0,
+                processedFiles: 0,
+                insertedEntries: 0,
+                skippedEntries: 0,
+                duration: 0,
+                errors: []
+            )
+            Logger.shared.info("✅ 所有文件都是最新的，无需增量处理")
+            progressCallback?(1.0, "无需增量处理")
+            return result
+        }
+        
+        // 步骤 2: 处理变更的文件
+        progressCallback?(0.2, "处理变更文件...")
+        var totalInserted = 0
+        var totalSkipped = 0
+        var processedFiles = 0
+        var errors: [SyncError] = []
+        
+        let filesToProcess = fileChangeInfo.newFiles + fileChangeInfo.changedFiles
+        
+        for (index, fileInfo) in filesToProcess.enumerated() {
+            let fileProgress = 0.2 + (Double(index) / Double(totalFilesToProcess)) * 0.6
+            progressCallback?(fileProgress, "处理文件: \(fileInfo.fileName)")
+            
+            do {
+                let result = try await processFileIncremental(fileInfo: fileInfo)
+                totalInserted += result.insertedEntries
+                totalSkipped += result.skippedEntries
+                processedFiles += 1
+                
+                Logger.shared.debug("文件 \(fileInfo.fileName): 插入 \(result.insertedEntries) 条，跳过 \(result.skippedEntries) 条")
+                
+            } catch {
+                let syncError = SyncError.fileReadFailed(fileInfo.fileName, error)
+                errors.append(syncError)
+                Logger.shared.error("处理文件失败: \(fileInfo.fileName) - \(error)")
+            }
+        }
+        
+        // 步骤 3: 更新统计汇总（如果有数据变更）
+        if totalInserted > 0 {
+            progressCallback?(0.9, "更新统计汇总...")
+            do {
+                try database.updateStatisticsSummaries()
+                Logger.shared.info("✅ 统计汇总更新完成")
+            } catch {
+                let syncError = SyncError.databaseUpdateFailed("统计汇总更新", error)
+                errors.append(syncError)
+                Logger.shared.warning("统计汇总更新失败，但增量同步已完成: \(error)")
+            }
+        }
+        
+        let duration = CFAbsoluteTimeGetCurrent() - startTime
+        progressCallback?(1.0, "增量同步完成")
+        
+        let result = IncrementalSyncResult(
+            totalFiles: fileChangeInfo.totalFiles,
+            newFiles: fileChangeInfo.newFiles.count,
+            changedFiles: fileChangeInfo.changedFiles.count,
+            processedFiles: processedFiles,
+            insertedEntries: totalInserted,
+            skippedEntries: totalSkipped,
+            duration: duration,
+            errors: errors
+        )
+        
+        Logger.shared.info("🎉 增量同步完成: \(result.description)")
+        return result
+    }
+    
+    // MARK: - 增量同步的私有辅助方法
+    
+    /// 扫描文件系统，找出变更的文件
+    private func findChangedFiles() async throws -> FileChangeInfo {
+        Logger.shared.info("🔍 扫描文件系统，对比数据库记录...")
+        
+        // 1. 获取所有实际存在的 JSONL 文件
+        let claudeDirectory = getClaudeDirectory()
+        let projectsDirectory = claudeDirectory.appendingPathComponent("projects")
+        
+        guard FileManager.default.fileExists(atPath: projectsDirectory.path) else {
+            throw SyncError.directoryAccessDenied(projectsDirectory.path)
+        }
+        
+        let actualFiles = try scanActualFiles(in: projectsDirectory)
+        Logger.shared.info("🗂️ 找到 \(actualFiles.count) 个实际JSONL文件")
+        
+        // 2. 查询数据库中的文件记录
+        let dbFiles = try database.getProcessedFiles()
+        Logger.shared.info("💾 数据库中记录了 \(dbFiles.count) 个已处理文件")
+        
+        // 3. 对比找出需要增量处理的文件
+        var newFiles: [FileInfo] = []
+        var changedFiles: [FileInfo] = []
+        var upToDateFiles = 0
+        
+        for (filePath, actualInfo) in actualFiles {
+            let fileName = URL(fileURLWithPath: filePath).lastPathComponent
+            
+            if let dbInfo = dbFiles[filePath] {
+                // 文件在数据库中存在，使用MD5检查是否有变更
+                let contentChanged = actualInfo.md5 != dbInfo.md5
+                
+                if contentChanged {
+                    // 文件内容发生变更，需要增量处理
+                    changedFiles.append(FileInfo(
+                        filePath: filePath,
+                        fileName: fileName,
+                        currentSize: actualInfo.size,
+                        currentModified: actualInfo.modified,
+                        currentMD5: actualInfo.md5,
+                        dbSize: dbInfo.size,
+                        dbModified: dbInfo.modified,
+                        dbMD5: dbInfo.md5,
+                        isNewFile: false
+                    ))
+                    
+                    Logger.shared.debug("📝 内容变更文件: \(fileName) (MD5: \(dbInfo.md5.prefix(8))... -> \(actualInfo.md5.prefix(8))...)")
+                } else {
+                    upToDateFiles += 1
+                }
+            } else {
+                // 新文件，需要完整处理
+                newFiles.append(FileInfo(
+                    filePath: filePath,
+                    fileName: fileName,
+                    currentSize: actualInfo.size,
+                    currentModified: actualInfo.modified,
+                    currentMD5: actualInfo.md5,
+                    dbSize: 0,
+                    dbModified: "",
+                    dbMD5: "",
+                    isNewFile: true
+                ))
+                
+                Logger.shared.debug("🆕 新文件: \(fileName) (\(actualInfo.size) 字节)")
+            }
+        }
+        
+        Logger.shared.info("📊 文件分析结果: 新文件 \(newFiles.count) 个, 变更文件 \(changedFiles.count) 个, 最新文件 \(upToDateFiles) 个")
+        
+        return FileChangeInfo(
+            totalFiles: actualFiles.count,
+            newFiles: newFiles,
+            changedFiles: changedFiles,
+            upToDateFiles: upToDateFiles
+        )
+    }
+    
+    /// 扫描指定目录中的所有实际JSONL文件（优化版）
+    private func scanActualFiles(in directory: URL) throws -> [String: (size: Int64, modified: String, md5: String)] {
+        var actualFiles: [String: (size: Int64, modified: String, md5: String)] = [:]
+        
+        guard let enumerator = FileManager.default.enumerator(atPath: directory.path) else {
+            throw SyncError.directoryAccessDenied(directory.path)
+        }
+        
+        for case let file as String in enumerator {
+            if file.hasSuffix(".jsonl") {
+                let fullPath = directory.appendingPathComponent(file).path
+                let fileURL = URL(fileURLWithPath: fullPath)
+                
+                do {
+                    let attributes = try FileManager.default.attributesOfItem(atPath: fullPath)
+                    if let fileSize = attributes[.size] as? Int64,
+                       let modifiedDate = attributes[.modificationDate] as? Date,
+                       let md5Hash = fileURL.fileMD5 {
+                        
+                        let formatter = ISO8601DateFormatter()
+                        let modifiedString = formatter.string(from: modifiedDate)
+                        actualFiles[fullPath] = (fileSize, modifiedString, md5Hash)
+                    } else {
+                        Logger.shared.warning("⚠️ 无法计算文件MD5，跳过: \(fullPath)")
+                    }
+                } catch {
+                    Logger.shared.warning("⚠️ 获取文件属性失败: \(fullPath) - \(error)")
+                }
+            }
+        }
+        
+        return actualFiles
+    }
+    
+    /// 处理单个文件的增量同步
+    private func processFileIncremental(fileInfo: FileInfo) async throws -> FileProcessResult {
+        Logger.shared.debug("📄 处理文件: \(fileInfo.fileName) (\(fileInfo.isNewFile ? "新文件" : "变更文件"))")
+        
+        // 如果是变更的文件，先删除该文件的所有旧记录
+        if !fileInfo.isNewFile {
+            try database.deleteEntriesBySourceFile(fileInfo.filePath)
+            Logger.shared.debug("🗑️ 已删除文件的旧记录: \(fileInfo.filePath)")
+        }
+        
+        // 解析并插入文件数据
+        let fileURL = URL(fileURLWithPath: fileInfo.filePath)
+        let entries = try await parseJSONLFile(fileURL)
+        
+        guard !entries.isEmpty else {
+            // 更新文件记录为空文件
+            try database.recordFileProcessing(fileURL, fileSize: fileInfo.currentSize, lastModified: ISO8601DateFormatter().date(from: fileInfo.currentModified) ?? Date())
+            try database.updateFileProcessingCompleted(fileURL, entryCount: 0)
+            
+            return FileProcessResult(insertedEntries: 0, skippedEntries: 0)
+        }
+        
+        // 批量插入数据
+        let insertedCount = try database.insertUsageEntries(entries)
+        
+        // 更新文件处理记录
+        try database.recordFileProcessing(fileURL, fileSize: fileInfo.currentSize, lastModified: ISO8601DateFormatter().date(from: fileInfo.currentModified) ?? Date())
+        try database.updateFileProcessingCompleted(fileURL, entryCount: entries.count)
+        
+        Logger.shared.debug("✅ 文件处理完成: \(fileInfo.fileName) - 插入 \(insertedCount) 条记录")
+        
+        return FileProcessResult(
+            insertedEntries: insertedCount,
+            skippedEntries: entries.count - insertedCount
+        )
     }
 }
 
@@ -912,4 +1159,93 @@ extension Array {
             Array(self[$0..<Swift.min($0 + size, count)])
         }
     }
+}
+
+// MARK: - 增量同步相关数据结构
+
+/// 文件信息结构（优化版）
+struct FileInfo {
+    let filePath: String
+    let fileName: String
+    let currentSize: Int64
+    let currentModified: String
+    let currentMD5: String
+    let dbSize: Int64
+    let dbModified: String
+    let dbMD5: String
+    let isNewFile: Bool
+    
+    // 是否内容发生变更（基于MD5比较）
+    var hasContentChanged: Bool {
+        return !isNewFile && currentMD5 != dbMD5
+    }
+    
+    // 是否需要处理（新文件或内容变更）
+    var needsProcessing: Bool {
+        return isNewFile || hasContentChanged
+    }
+}
+
+/// 文件变更信息
+struct FileChangeInfo {
+    let totalFiles: Int
+    let newFiles: [FileInfo]
+    let changedFiles: [FileInfo]
+    let upToDateFiles: Int
+}
+
+/// 增量同步结果
+struct IncrementalSyncResult {
+    let totalFiles: Int
+    let newFiles: Int
+    let changedFiles: Int
+    let processedFiles: Int
+    let insertedEntries: Int
+    let skippedEntries: Int
+    let duration: TimeInterval
+    let errors: [SyncError]
+    
+    /// 成功率 (0.0-1.0)
+    var successRate: Double {
+        let totalToProcess = newFiles + changedFiles
+        guard totalToProcess > 0 else { return 1.0 }
+        return Double(processedFiles) / Double(totalToProcess)
+    }
+    
+    /// 处理效率 (有数据的文件比例)
+    var processingEfficiency: Double {
+        guard insertedEntries + skippedEntries > 0 else { return 0.0 }
+        return Double(insertedEntries) / Double(insertedEntries + skippedEntries)
+    }
+    
+    /// 吞吐量 (记录/秒)
+    var throughput: Double {
+        guard duration > 0 else { return 0.0 }
+        return Double(insertedEntries) / duration
+    }
+    
+    /// 结果描述
+    var description: String {
+        return """
+        增量同步完成: 总文件 \(totalFiles) 个，新文件 \(newFiles) 个，变更文件 \(changedFiles) 个
+        处理文件: \(processedFiles) 个，插入记录 \(insertedEntries) 条，跳过记录 \(skippedEntries) 条
+        耗时: \(String(format: "%.2f", duration))s，成功率: \(String(format: "%.1f", successRate * 100))%
+        """
+    }
+    
+    /// 性能报告
+    var performanceReport: String {
+        return """
+        增量同步性能指标:
+        - 处理效率: \(String(format: "%.1f", processingEfficiency * 100))%
+        - 数据吞吐量: \(String(format: "%.0f", throughput)) 记录/秒
+        - 平均文件处理时间: \(String(format: "%.3f", duration / Double(max(processedFiles, 1))))s/文件
+        """
+    }
+}
+
+/// 文件处理结果
+struct FileProcessResult {
+    let insertedEntries: Int
+    let skippedEntries: Int
 }

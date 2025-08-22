@@ -1,13 +1,22 @@
 #!/usr/bin/env swift
 
+// 优化的增量同步测试
+// 新增功能：
+// 1. 使用MD5哈希进行精确的文件内容变更检测
+// 2. 使用完整文件路径作为标识符，解决跨项目同名文件冲突
+// 3. 为安全的增量同步提供技术基础
+// 更新时间：2025-08-22
+
 import Foundation
 import SQLite3
+import CryptoKit
 
-// MARK: - 基于现有jsonl_files表的增量同步
+// MARK: - 基于现有jsonl_files表的增量同步（优化版）
 
-print("🚀 启动基于现有jsonl_files表的增量同步")
-print("时间: 2025-08-16T09:51:43+08:00")
+print("🚀 启动基于现有jsonl_files表的增量同步（优化版）")
+print("时间: 2025-08-22T11:39:52+08:00")
 print("目标数据库: ~/Library/Application Support/ClaudeBar/usage_statistics.db")
+print("⚠️ 重要：需要数据库包含md5_hash字段，请先运行优化后的全量同步")
 
 // 获取数据库路径
 let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -35,16 +44,48 @@ defer {
 
 print("✅ 成功连接到现有的 usage_statistics.db")
 
-// 文件信息结构
+// MARK: - MD5计算扩展
+extension Data {
+    var md5Hash: String {
+        let digest = Insecure.MD5.hash(data: self)
+        return digest.map { String(format: "%02hhx", $0) }.joined()
+    }
+}
+
+extension URL {
+    var fileMD5: String? {
+        do {
+            let data = try Data(contentsOf: self)
+            return data.md5Hash
+        } catch {
+            print("⚠️ 计算文件MD5失败: \(self.path) - \(error.localizedDescription)")
+            return nil
+        }
+    }
+}
+
+// 文件信息结构（优化版）
 struct FileInfo {
     let path: String
     let name: String
     let currentSize: Int64
     let currentModified: String
+    let currentMD5: String
     let dbSize: Int64
     let dbModified: String
+    let dbMD5: String
     let entryCount: Int
     let needsUpdate: Bool
+    
+    // 是否为新文件（数据库中不存在）
+    var isNewFile: Bool {
+        return dbMD5.isEmpty
+    }
+    
+    // 是否内容发生变更（基于MD5比较）
+    var hasContentChanged: Bool {
+        return !isNewFile && currentMD5 != dbMD5
+    }
 }
 
 // 检查现有数据
@@ -86,19 +127,23 @@ func findIncrementalFiles() -> [FileInfo] {
         return []
     }
     
-    var actualFiles: [String: (size: Int64, modified: String)] = [:]
+    var actualFiles: [String: (size: Int64, modified: String, md5: String)] = [:]
     
     for case let file as String in enumerator {
         if file.hasSuffix(".jsonl") {
             let fullPath = claudeProjectsPath.appendingPathComponent(file).path
+            let fileURL = URL(fileURLWithPath: fullPath)
             
             if let attributes = try? fileManager.attributesOfItem(atPath: fullPath),
                let fileSize = attributes[.size] as? Int64,
-               let modifiedDate = attributes[.modificationDate] as? Date {
+               let modifiedDate = attributes[.modificationDate] as? Date,
+               let md5Hash = fileURL.fileMD5 {
                 
                 let formatter = ISO8601DateFormatter()
                 let modifiedString = formatter.string(from: modifiedDate)
-                actualFiles[fullPath] = (fileSize, modifiedString)
+                actualFiles[fullPath] = (fileSize, modifiedString, md5Hash)
+            } else {
+                print("⚠️ 无法计算文件MD5，跳过: \(fullPath)")
             }
         }
     }
@@ -107,13 +152,13 @@ func findIncrementalFiles() -> [FileInfo] {
     
     // 2. 查询数据库中的文件记录
     let sql = """
-    SELECT file_path, file_name, file_size, last_modified, entry_count 
+    SELECT file_path, file_name, file_size, last_modified, md5_hash, entry_count 
     FROM jsonl_files 
     WHERE processing_status = 'completed'
     """
     
     var statement: OpaquePointer?
-    var dbFiles: [String: (name: String, size: Int64, modified: String, entryCount: Int)] = [:]
+    var dbFiles: [String: (name: String, size: Int64, modified: String, md5: String, entryCount: Int)] = [:]
     
     if sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK {
         while sqlite3_step(statement) == SQLITE_ROW {
@@ -121,9 +166,10 @@ func findIncrementalFiles() -> [FileInfo] {
             let fileName = String(cString: sqlite3_column_text(statement, 1))
             let fileSize = sqlite3_column_int64(statement, 2)
             let lastModified = String(cString: sqlite3_column_text(statement, 3))
-            let entryCount = Int(sqlite3_column_int(statement, 4))
+            let md5Hash = String(cString: sqlite3_column_text(statement, 4))
+            let entryCount = Int(sqlite3_column_int(statement, 5))
             
-            dbFiles[filePath] = (fileName, fileSize, lastModified, entryCount)
+            dbFiles[filePath] = (fileName, fileSize, lastModified, md5Hash, entryCount)
         }
     }
     sqlite3_finalize(statement)
@@ -140,27 +186,28 @@ func findIncrementalFiles() -> [FileInfo] {
         let fileName = URL(fileURLWithPath: filePath).lastPathComponent
         
         if let dbInfo = dbFiles[filePath] {
-            // 文件在数据库中存在，检查是否有变更
-            let sizeChanged = actualInfo.size != dbInfo.size
-            let timeChanged = actualInfo.modified != dbInfo.modified
+            // 文件在数据库中存在，使用MD5检查是否有变更
+            let contentChanged = actualInfo.md5 != dbInfo.md5
             
-            if sizeChanged || timeChanged {
-                // 文件有变更，需要增量处理
+            if contentChanged {
+                // 文件内容发生变更，需要增量处理
                 incrementalFiles.append(FileInfo(
                     path: filePath,
                     name: fileName,
                     currentSize: actualInfo.size,
                     currentModified: actualInfo.modified,
+                    currentMD5: actualInfo.md5,
                     dbSize: dbInfo.size,
                     dbModified: dbInfo.modified,
+                    dbMD5: dbInfo.md5,
                     entryCount: dbInfo.entryCount,
                     needsUpdate: true
                 ))
                 changedFiles += 1
                 
-                print("📝 变更文件: \(fileName)")
+                print("📝 内容变更文件: \(fileName)")
                 print("   大小: \(dbInfo.size) -> \(actualInfo.size) 字节")
-                print("   时间: \(dbInfo.modified) -> \(actualInfo.modified)")
+                print("   MD5: \(dbInfo.md5.prefix(8))... -> \(actualInfo.md5.prefix(8))...")
             } else {
                 upToDateFiles += 1
             }
@@ -171,13 +218,15 @@ func findIncrementalFiles() -> [FileInfo] {
                 name: fileName,
                 currentSize: actualInfo.size,
                 currentModified: actualInfo.modified,
+                currentMD5: actualInfo.md5,
                 dbSize: 0,
                 dbModified: "",
+                dbMD5: "",
                 entryCount: 0,
                 needsUpdate: true
             ))
             newFiles += 1
-            print("🆕 新文件: \(fileName) (\(actualInfo.size) 字节)")
+            print("🆕 新文件: \(fileName) (\(actualInfo.size) 字节, MD5: \(actualInfo.md5.prefix(8))...)")
         }
     }
     
@@ -599,12 +648,12 @@ func insertUsageEntry(entry: (timestamp: String, model: String, inputTokens: Int
 }
 
 // 更新jsonl_files表中的文件记录
-func updateFileRecord(filePath: String, fileName: String, fileSize: Int64, lastModified: String, entryCount: Int) -> Bool {
+func updateFileRecord(filePath: String, fileName: String, fileSize: Int64, lastModified: String, md5Hash: String, entryCount: Int) -> Bool {
     let sql = """
     INSERT OR REPLACE INTO jsonl_files 
-    (file_path, file_name, file_size, last_modified, last_processed, 
+    (file_path, file_name, file_size, last_modified, md5_hash, last_processed, 
      entry_count, processing_status, updated_at)
-    VALUES (?, ?, ?, ?, datetime('now'), ?, 'completed', datetime('now'))
+    VALUES (?, ?, ?, ?, ?, datetime('now'), ?, 'completed', datetime('now'))
     """
     
     var statement: OpaquePointer?
@@ -617,7 +666,8 @@ func updateFileRecord(filePath: String, fileName: String, fileSize: Int64, lastM
         _ = fileName.withCString { sqlite3_bind_text(statement, 2, $0, -1, SQLITE_TRANSIENT) }
         sqlite3_bind_int64(statement, 3, fileSize)
         _ = lastModified.withCString { sqlite3_bind_text(statement, 4, $0, -1, SQLITE_TRANSIENT) }
-        sqlite3_bind_int(statement, 5, Int32(entryCount))
+        _ = md5Hash.withCString { sqlite3_bind_text(statement, 5, $0, -1, SQLITE_TRANSIENT) }
+        sqlite3_bind_int(statement, 6, Int32(entryCount))
         
         if sqlite3_step(statement) == SQLITE_DONE {
             success = true
@@ -646,9 +696,9 @@ func processFileIncremental(fileInfo: FileInfo) -> (newEntries: Int, updatedEntr
     if fileInfo.dbSize > 0 && fileInfo.needsUpdate {
         print("📝 文件已变更，需要重新处理")
         
-        // 使用精确的source_file字段删除该文件的记录
-        let fileName = fileInfo.name
-        print("   🗑️ 删除文件相关的旧记录: \(fileName)")
+        // 使用完整文件路径删除该文件的记录（解决跨项目同名文件冲突）
+        let filePath = fileInfo.path
+        print("   🗑️ 删除文件相关的旧记录: \(filePath)")
         
         let deleteSQL = "DELETE FROM usage_entries WHERE source_file = ?"
         
@@ -656,8 +706,8 @@ func processFileIncremental(fileInfo: FileInfo) -> (newEntries: Int, updatedEntr
         if sqlite3_prepare_v2(db, deleteSQL, -1, &deleteStatement, nil) == SQLITE_OK {
             let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
             
-            // 绑定文件名参数
-            _ = fileName.withCString { sqlite3_bind_text(deleteStatement, 1, $0, -1, SQLITE_TRANSIENT) }
+            // 绑定完整文件路径参数
+            _ = filePath.withCString { sqlite3_bind_text(deleteStatement, 1, $0, -1, SQLITE_TRANSIENT) }
             
             if sqlite3_step(deleteStatement) == SQLITE_DONE {
                 let deletedCount = sqlite3_changes(db)
@@ -701,7 +751,7 @@ func processFileIncremental(fileInfo: FileInfo) -> (newEntries: Int, updatedEntr
                 do {
                     let entry = try JSONDecoder().decode(RawJSONLEntry.self, from: lineData)
                     
-                    if let usageEntry = entry.toUsageEntry(projectPath: projectPath, sourceFile: fileInfo.name) {
+                    if let usageEntry = entry.toUsageEntry(projectPath: projectPath, sourceFile: fileInfo.path) {
                         let result = insertUsageEntry(entry: usageEntry, projectPath: projectPath)
                         if result.inserted {
                             newEntries += 1
@@ -746,6 +796,7 @@ func processFileIncremental(fileInfo: FileInfo) -> (newEntries: Int, updatedEntr
         fileName: fileInfo.name,
         fileSize: fileInfo.currentSize,
         lastModified: fileInfo.currentModified,
+        md5Hash: fileInfo.currentMD5,
         entryCount: totalEntries
     )
     

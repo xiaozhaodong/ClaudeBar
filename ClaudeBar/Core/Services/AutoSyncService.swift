@@ -585,30 +585,30 @@ class AutoSyncService: ObservableObject, AutoSyncServiceProtocol {
         var processedItems = 0
         var errors: [SyncError] = []
         
-        logger.info("开始执行全量同步（替代增量同步）")
+        logger.info("开始执行增量同步")
         
-        // 调用全量数据迁移
+        // 调用增量数据同步
         updateSyncStatus(.syncing)
-        updateProgress(0.1, description: "准备全量数据迁移...")
+        updateProgress(0.1, description: "准备增量数据同步...")
         
         do {
-            let migrationResult = try await usageService.performFullDataMigration { progress, description in
+            let syncResult = try await usageService.performIncrementalDataSync { progress, description in
                 Task { @MainActor in
                     let totalProgress = 0.1 + (progress * 0.85) // 映射到10%-95%区间
                     self.updateProgress(totalProgress, description: description)
                 }
             }
             
-            processedItems = migrationResult.insertedEntries
-            logger.info("全量同步完成：\(migrationResult.insertedEntries) 条记录同步到数据库")
+            processedItems = syncResult.insertedEntries
+            logger.info("增量同步完成：\(syncResult.insertedEntries) 条记录同步到数据库")
             
         } catch {
-            let syncError = SyncError.databaseUpdateFailed("全量同步失败", error)
+            let syncError = SyncError.databaseUpdateFailed("增量同步失败", error)
             errors.append(syncError)
             throw syncError
         }
         
-        updateProgress(1.0, description: "全量同步完成")
+        updateProgress(1.0, description: "增量同步完成")
         
         return SyncResult(
             type: .incremental(since: since),
@@ -782,7 +782,7 @@ class AutoSyncService: ObservableObject, AutoSyncServiceProtocol {
         // 设置定时器事件处理
         timer.setEventHandler { [weak self] in
             Task { @MainActor [weak self] in
-                self?.logger.info("🔥 DispatchTimer 触发，准备执行全量同步")
+                self?.logger.info("🔥 DispatchTimer 触发，准备执行增量同步")
                 await self?.handleTimerFired()
             }
         }
@@ -821,7 +821,7 @@ class AutoSyncService: ObservableObject, AutoSyncServiceProtocol {
         
         // 检查是否有同步正在进行
         guard !isSyncing else {
-            logger.syncSkipped("定时同步", reason: "上次同步仍在进行中")
+            logger.syncSkipped("定时增量同步", reason: "上次同步仍在进行中")
             // 更新下次同步时间（延迟到下个周期）
             updateNextSyncTime()
             return
@@ -833,13 +833,13 @@ class AutoSyncService: ObservableObject, AutoSyncServiceProtocol {
         
         // 记录定时器触发延迟
         if abs(delay) > 5.0 { // 延迟超过5秒记录警告
-            logger.warning("定时同步触发延迟: \(String(format: "%.1f", delay))秒")
+            logger.warning("定时增量同步触发延迟: \(String(format: "%.1f", delay))秒")
         }
         
         // 更新定时器验证统计
         timerValidation.recordTimerFired(delay: delay)
         
-        // 发送定时同步触发通知
+        // 发送定时增量同步触发通知
         NotificationCenter.default.post(
             name: .scheduledSyncDidTrigger,
             object: nil,
@@ -853,19 +853,19 @@ class AutoSyncService: ObservableObject, AutoSyncServiceProtocol {
         // 更新下次同步时间
         updateNextSyncTime()
         
-        // 执行全量同步
+        // 执行增量同步
         do {
-            logger.syncStarted("定时全量同步", details: "预定时间: \(scheduledTime.formatted(date: .abbreviated, time: .shortened))")
-            _ = try await performFullSync()
+            logger.syncStarted("定时增量同步", details: "预定时间: \(scheduledTime.formatted(date: .abbreviated, time: .shortened))")
+            _ = try await performIncrementalSync()
             
-            // 记录成功的定时同步
+            // 记录成功的定时增量同步
             timerValidation.recordSuccessfulSync()
-            logger.syncCompleted("定时全量同步")
+            logger.syncCompleted("定时增量同步")
             
         } catch {
-            // 记录失败的定时同步
+            // 记录失败的定时增量同步
             timerValidation.recordFailedSync()
-            logger.syncError("定时全量同步", error: error)
+            logger.syncError("定时增量同步", error: error)
             
             // 检查是否需要停止自动同步（连续失败过多）
             if timerValidation.shouldStopAutoSync() {

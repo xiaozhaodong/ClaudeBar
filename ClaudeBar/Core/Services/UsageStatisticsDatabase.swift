@@ -1,5 +1,6 @@
 import Foundation
 import SQLite3
+import CryptoKit
 
 /// 使用统计数据库管理器
 /// 专门负责使用统计数据的存储和查询
@@ -238,6 +239,7 @@ class UsageStatisticsDatabase {
             file_name TEXT NOT NULL,
             file_size INTEGER NOT NULL,
             last_modified TEXT NOT NULL,
+            md5_hash TEXT NOT NULL,
             last_processed TEXT,
             entry_count INTEGER DEFAULT 0,
             processing_status TEXT DEFAULT 'pending',
@@ -352,6 +354,7 @@ class UsageStatisticsDatabase {
             "CREATE INDEX IF NOT EXISTS idx_jsonl_files_path ON jsonl_files(file_path)",
             "CREATE INDEX IF NOT EXISTS idx_jsonl_files_modified ON jsonl_files(last_modified)",
             "CREATE INDEX IF NOT EXISTS idx_jsonl_files_status ON jsonl_files(processing_status)",
+            "CREATE INDEX IF NOT EXISTS idx_jsonl_files_md5 ON jsonl_files(md5_hash)",
             
             // 统计表索引
             "CREATE INDEX IF NOT EXISTS idx_daily_stats_date ON daily_statistics(date_string)",
@@ -832,8 +835,8 @@ extension UsageStatisticsDatabase {
     private func recordFileProcessingInternal(_ fileURL: URL, fileSize: Int64, lastModified: Date) throws {
         let insertSQL = """
         INSERT OR REPLACE INTO jsonl_files 
-        (file_path, file_name, file_size, last_modified, processing_status)
-        VALUES (?, ?, ?, ?, 'pending')
+        (file_path, file_name, file_size, last_modified, md5_hash, processing_status)
+        VALUES (?, ?, ?, ?, ?, 'pending')
         """
         
         var statement: OpaquePointer?
@@ -848,6 +851,11 @@ extension UsageStatisticsDatabase {
         let formatter = ISO8601DateFormatter()
         let lastModifiedString = formatter.string(from: lastModified)
         
+        // 计算文件MD5值
+        guard let md5Hash = fileURL.fileMD5 else {
+            throw UsageStatisticsDBError.operationFailed("计算文件MD5失败: \(fileURL.path)")
+        }
+        
         // 使用 SQLITE_TRANSIENT 确保字符串被复制
         let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
         
@@ -855,6 +863,7 @@ extension UsageStatisticsDatabase {
         fileURL.lastPathComponent.withCString { sqlite3_bind_text(statement, 2, $0, -1, SQLITE_TRANSIENT) }
         sqlite3_bind_int64(statement, 3, fileSize)
         lastModifiedString.withCString { sqlite3_bind_text(statement, 4, $0, -1, SQLITE_TRANSIENT) }
+        md5Hash.withCString { sqlite3_bind_text(statement, 5, $0, -1, SQLITE_TRANSIENT) }
         
         if sqlite3_step(statement) != SQLITE_DONE {
             let errmsg = String(cString: sqlite3_errmsg(db)!)
@@ -897,6 +906,80 @@ extension UsageStatisticsDatabase {
         if sqlite3_step(statement) != SQLITE_DONE {
             let errmsg = String(cString: sqlite3_errmsg(db)!)
             throw UsageStatisticsDBError.operationFailed("更新文件状态失败: \(errmsg)")
+        }
+    }
+    
+    /// 获取文件处理记录（用于增量同步对比）
+    func getFileProcessingRecords() throws -> [String: FileProcessingRecord] {
+        return try dbQueue.sync {
+            return try getFileProcessingRecordsInternal()
+        }
+    }
+    
+    private func getFileProcessingRecordsInternal() throws -> [String: FileProcessingRecord] {
+        let sql = """
+        SELECT file_path, file_name, file_size, last_modified, entry_count 
+        FROM jsonl_files 
+        WHERE processing_status = 'completed'
+        """
+        
+        var statement: OpaquePointer?
+        var records: [String: FileProcessingRecord] = [:]
+        
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            let errmsg = String(cString: sqlite3_errmsg(db)!)
+            throw UsageStatisticsDBError.operationFailed("准备查询文件记录语句失败: \(errmsg)")
+        }
+        
+        defer { sqlite3_finalize(statement) }
+        
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let filePath = String(cString: sqlite3_column_text(statement, 0))
+            let fileName = String(cString: sqlite3_column_text(statement, 1))
+            let fileSize = sqlite3_column_int64(statement, 2)
+            let lastModified = String(cString: sqlite3_column_text(statement, 3))
+            let entryCount = Int(sqlite3_column_int(statement, 4))
+            
+            records[filePath] = FileProcessingRecord(
+                fileName: fileName,
+                fileSize: fileSize,
+                lastModified: lastModified,
+                entryCount: entryCount
+            )
+        }
+        
+        return records
+    }
+    
+    /// 根据源文件名删除使用记录（用于增量同步清理变更文件的旧数据）
+    func deleteUsageEntriesBySourceFile(_ fileName: String) throws {
+        try dbQueue.sync {
+            try deleteUsageEntriesBySourceFileInternal(fileName)
+        }
+    }
+    
+    private func deleteUsageEntriesBySourceFileInternal(_ fileName: String) throws {
+        let deleteSQL = "DELETE FROM usage_entries WHERE source_file = ?"
+        
+        var statement: OpaquePointer?
+        
+        guard sqlite3_prepare_v2(db, deleteSQL, -1, &statement, nil) == SQLITE_OK else {
+            let errmsg = String(cString: sqlite3_errmsg(db)!)
+            throw UsageStatisticsDBError.operationFailed("准备删除语句失败: \(errmsg)")
+        }
+        
+        defer { sqlite3_finalize(statement) }
+        
+        // 使用 SQLITE_TRANSIENT 确保字符串被复制
+        let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        fileName.withCString { sqlite3_bind_text(statement, 1, $0, -1, SQLITE_TRANSIENT) }
+        
+        if sqlite3_step(statement) == SQLITE_DONE {
+            let deletedCount = sqlite3_changes(db)
+            Logger.shared.debug("精确删除了 \(deletedCount) 条旧记录（文件: \(fileName)）")
+        } else {
+            let errmsg = String(cString: sqlite3_errmsg(db)!)
+            throw UsageStatisticsDBError.operationFailed("删除使用记录失败: \(errmsg)")
         }
     }
     
@@ -2184,6 +2267,81 @@ extension UsageStatisticsDatabase {
     }
 }
 
+// MARK: - 增量同步支持方法
+
+extension UsageStatisticsDatabase {
+    /// 获取所有已处理的文件记录（用于增量同步对比）
+    /// - Returns: 文件路径 -> 文件信息 的字典
+    func getProcessedFiles() throws -> [String: (size: Int64, modified: String, md5: String)] {
+        return try dbQueue.sync {
+            try getProcessedFilesInternal()
+        }
+    }
+    
+    private func getProcessedFilesInternal() throws -> [String: (size: Int64, modified: String, md5: String)] {
+        let sql = """
+        SELECT file_path, file_size, last_modified, md5_hash 
+        FROM jsonl_files 
+        WHERE processing_status = 'completed'
+        """
+        
+        var statement: OpaquePointer?
+        var result: [String: (size: Int64, modified: String, md5: String)] = [:]
+        
+        if sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK {
+            while sqlite3_step(statement) == SQLITE_ROW {
+                let filePath = String(cString: sqlite3_column_text(statement, 0))
+                let fileSize = sqlite3_column_int64(statement, 1)
+                let lastModified = String(cString: sqlite3_column_text(statement, 2))
+                let md5Hash = String(cString: sqlite3_column_text(statement, 3))
+                
+                result[filePath] = (fileSize, lastModified, md5Hash)
+            }
+        } else {
+            let errmsg = String(cString: sqlite3_errmsg(db)!)
+            throw UsageStatisticsDBError.operationFailed("获取已处理文件失败: \(errmsg)")
+        }
+        
+        sqlite3_finalize(statement)
+        return result
+    }
+    
+    /// 按源文件名删除使用记录（用于增量同步中的文件重新处理）
+    /// - Parameter sourceFile: 源文件名
+    func deleteEntriesBySourceFile(_ sourceFile: String) throws {
+        try dbQueue.sync {
+            try deleteEntriesBySourceFileInternal(sourceFile)
+        }
+    }
+    
+    private func deleteEntriesBySourceFileInternal(_ sourceFile: String) throws {
+        let sql = "DELETE FROM usage_entries WHERE source_file = ?"
+        
+        var statement: OpaquePointer?
+        
+        if sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK {
+            let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+            
+            _ = sourceFile.withCString { 
+                sqlite3_bind_text(statement, 1, $0, -1, SQLITE_TRANSIENT)
+            }
+            
+            if sqlite3_step(statement) != SQLITE_DONE {
+                let errmsg = String(cString: sqlite3_errmsg(db)!)
+                throw UsageStatisticsDBError.operationFailed("删除文件记录失败: \(errmsg)")
+            }
+            
+            let deletedCount = sqlite3_changes(db)
+            print("✅ 已删除文件 \(sourceFile) 的 \(deletedCount) 条记录")
+        } else {
+            let errmsg = String(cString: sqlite3_errmsg(db)!)
+            throw UsageStatisticsDBError.operationFailed("准备删除语句失败: \(errmsg)")
+        }
+        
+        sqlite3_finalize(statement)
+    }
+}
+
 // MARK: - 辅助数据结构
 
 struct DatabaseStats {
@@ -2195,6 +2353,42 @@ struct DatabaseStats {
     
     var totalRecords: Int {
         return usageEntriesCount + jsonlFilesCount + dailyStatisticsCount + modelStatisticsCount + projectStatisticsCount
+    }
+}
+
+// MARK: - 数据结构定义
+
+/// 文件处理记录
+struct FileProcessingRecord {
+    let fileName: String
+    let fileSize: Int64
+    let lastModified: String
+    let entryCount: Int
+    
+    /// 记录描述
+    var description: String {
+        return "文件: \(fileName), 大小: \(fileSize) 字节, 修改时间: \(lastModified), 记录数: \(entryCount)"
+    }
+}
+
+
+// MARK: - MD5计算扩展
+extension Data {
+    var md5Hash: String {
+        let digest = Insecure.MD5.hash(data: self)
+        return digest.map { String(format: "%02hhx", $0) }.joined()
+    }
+}
+
+extension URL {
+    var fileMD5: String? {
+        do {
+            let data = try Data(contentsOf: self)
+            return data.md5Hash
+        } catch {
+            print("⚠️ 计算文件MD5失败: \(self.path) - \(error.localizedDescription)")
+            return nil
+        }
     }
 }
 
