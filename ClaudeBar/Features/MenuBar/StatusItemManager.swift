@@ -3,7 +3,7 @@ import SwiftUI
 import Combine
 
 @MainActor
-class StatusItemManager: ObservableObject {
+class StatusItemManager: NSObject, ObservableObject, NSPopoverDelegate {
     private var statusItem: NSStatusItem?
     private let appState: AppState
     private var popover: NSPopover?
@@ -11,6 +11,7 @@ class StatusItemManager: ObservableObject {
     
     init(appState: AppState) {
         self.appState = appState
+        super.init()
         setupStatusItem()
         setupPopover()
         setupStateObservers()
@@ -34,8 +35,11 @@ class StatusItemManager: ObservableObject {
     private func setupPopover() {
         popover = NSPopover()
         popover?.contentSize = NSSize(width: 320, height: 450)
-        popover?.behavior = .transient
+        popover?.behavior = .transient // 确保失去焦点时自动关闭
         popover?.animates = true
+        
+        // 设置代理以处理失去焦点的关闭事件
+        popover?.delegate = self
         
         // 创建菜单栏界面
         let menuBarView = MenuBarView()
@@ -260,6 +264,18 @@ class StatusItemManager: ObservableObject {
     
     private func removeLoadingAnimation(from button: NSStatusBarButton) {
         button.layer?.removeAnimation(forKey: "loadingRotation")
+    }
+    
+    // MARK: - NSPopoverDelegate
+    
+    func popoverShouldClose(_ popover: NSPopover) -> Bool {
+        // 允许popover关闭，这在失去焦点时会被调用
+        return true
+    }
+    
+    func popoverDidClose(_ notification: Notification) {
+        // Popover已关闭，可以在这里执行清理工作
+        print("菜单栏已隐藏")
     }
     
     deinit {

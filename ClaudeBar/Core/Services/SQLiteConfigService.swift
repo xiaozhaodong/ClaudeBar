@@ -92,6 +92,13 @@ class SQLiteConfigService: ConfigServiceProtocol {
         try updateSettingsFile(config)
         
         print("配置切换成功: \(config.name)")
+        
+        // 发送配置变化通知
+        NotificationCenter.default.postConfigDidChange(
+            operation: "switch",
+            configName: config.name,
+            config: config
+        )
     }
     
     /// 创建新配置
@@ -126,6 +133,13 @@ class SQLiteConfigService: ConfigServiceProtocol {
         
         try databaseManager.createConfig(record)
         print("配置创建成功: \(config.name)")
+        
+        // 发送配置变化通知
+        NotificationCenter.default.postConfigDidChange(
+            operation: "create",
+            configName: config.name,
+            config: config
+        )
     }
     
     /// 删除配置
@@ -155,6 +169,13 @@ class SQLiteConfigService: ConfigServiceProtocol {
         
         try databaseManager.deleteConfig(byId: record.id)
         print("配置删除成功: \(config.name)")
+        
+        // 发送配置变化通知
+        NotificationCenter.default.postConfigDidChange(
+            operation: "delete",
+            configName: config.name,
+            config: config
+        )
     }
     
     /// 更新配置
@@ -196,6 +217,13 @@ class SQLiteConfigService: ConfigServiceProtocol {
         }
         
         print("配置更新成功: \(oldConfig.name) -> \(newConfig.name)")
+        
+        // 发送配置变化通知
+        NotificationCenter.default.postConfigDidChange(
+            operation: "update",
+            configName: newConfig.name,
+            config: newConfig
+        )
     }
     
     /// 获取当前配置

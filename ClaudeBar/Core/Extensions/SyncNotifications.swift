@@ -62,6 +62,13 @@ extension Notification.Name {
     /// userInfo: ["dataSource": DataSourceStatus, "filePath": String?]
     static let dataSourceDidChange = Notification.Name("ClaudeBar.dataSourceDidChange")
     
+    // MARK: - API配置变更通知
+    
+    /// API配置变更通知
+    /// 当API配置发生变更时发送（创建、更新、删除、切换）
+    /// userInfo: ["operation": String, "configName": String, "config": ClaudeConfig?]
+    static let configDidChange = Notification.Name("ClaudeBar.configDidChange")
+    
     /// 数据完整性检查完成通知
     /// 当数据完整性检查完成时发送
     /// userInfo: ["success": Bool, "issuesFound": Int, "details": [String]?]
@@ -146,6 +153,10 @@ public struct SyncNotificationKeys {
     // MARK: - 检查相关键
     static let issuesFound = "issuesFound"
     static let details = "details"
+    
+    // MARK: - 配置变更相关键
+    static let configName = "configName"
+    static let config = "config"
 }
 
 // MARK: - 同步状态枚举
@@ -354,5 +365,21 @@ extension NotificationCenter {
             userInfo[SyncNotificationKeys.filePath] = filePath
         }
         post(name: .dataSourceDidChange, object: nil, userInfo: userInfo)
+    }
+    
+    /// 发送配置变更通知
+    /// - Parameters:
+    ///   - operation: 操作类型（create、update、delete、switch）
+    ///   - configName: 配置名称
+    ///   - config: 配置对象（可选）
+    public func postConfigDidChange(operation: String, configName: String, config: Any? = nil) {
+        var userInfo: [String: Any] = [
+            SyncNotificationKeys.operation: operation,
+            SyncNotificationKeys.configName: configName
+        ]
+        if let config = config {
+            userInfo[SyncNotificationKeys.config] = config
+        }
+        post(name: .configDidChange, object: nil, userInfo: userInfo)
     }
 }

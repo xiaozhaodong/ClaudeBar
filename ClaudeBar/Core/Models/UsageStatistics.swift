@@ -46,31 +46,13 @@ struct UsageStatistics: Codable, Identifiable {
         )
     }
     
-    /// 平均每次请求成本（Phase 3: 改进版）
+    /// 平均每次请求成本
     var averageCostPerRequest: Double {
-        guard totalRequests > 0 else { 
-            print("⚠️ 计算平均每请求成本时总请求数为 0")
+        guard totalRequests > 0, totalCost > 0 else { 
             return 0 
         }
         
-        // Phase 3: 如果总成本为 0，可能是数据问题
-        guard totalCost > 0 else {
-            print("⚠️ 总成本为 $0，平均成本计算可能不准确 - 总请求数: \(totalRequests)")
-            return 0
-        }
-        
-        let average = totalCost / Double(totalRequests)
-        
-        // Phase 3: 合理性检查：平均成本应该在合理范围内
-        if average > 10.0 {  // 超过 $10 每请求可能有问题
-            print("⚠️ 平均每请求成本异常高: $\(String(format: "%.6f", average)) - 总成本: $\(String(format: "%.6f", totalCost)), 总请求: \(totalRequests)")
-        } else if average < 0.000001 {  // 低于 $0.000001 可能有问题
-            print("⚠️ 平均每请求成本异常低: $\(String(format: "%.6f", average)) - 总成本: $\(String(format: "%.6f", totalCost)), 总请求: \(totalRequests)")
-        } else {
-            print("✅ 平均每请求成本在合理范围内: $\(String(format: "%.6f", average))")
-        }
-        
-        return average
+        return totalCost / Double(totalRequests)
     }
     
     /// 平均每个会话成本

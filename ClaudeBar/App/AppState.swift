@@ -33,9 +33,9 @@ class AppState: ObservableObject {
     private var successMessageTask: Task<Void, Never>?
     private var loadUsageTask: Task<Void, Never>?
     
-    // 配置缓存机制
-    private var lastConfigLoadTime: Date?
-    private let configCacheValidityDuration: TimeInterval = 60 // 增加到60秒缓存有效期
+    // 配置缓存机制 - 已移除，改为完全事件驱动
+    // private var lastConfigLoadTime: Date?
+    // private let configCacheValidityDuration: TimeInterval = 300
     
     init(configService: ConfigServiceProtocol? = nil) {
         self.configService = configService ?? SQLiteConfigService()
@@ -66,6 +66,9 @@ class AppState: ObservableObject {
         
         // 监听数据同步完成通知，自动更新菜单栏统计数据
         setupSyncNotificationListeners()
+        
+        // 监听配置变化通知，自动更新配置列表
+        setupConfigChangeNotificationListeners()
             
         // 配置自动同步服务的初始状态
         configureAutoSyncService()
@@ -116,6 +119,38 @@ class AppState: ObservableObject {
             .store(in: &cancellables)
             
         Logger.shared.info("AppState: 已设置同步通知监听器")
+    }
+    
+    /// 设置配置变化通知监听器
+    /// 监听配置变化通知，自动更新配置列表
+    private func setupConfigChangeNotificationListeners() {
+        // 监听配置变化通知
+        NotificationCenter.default
+            .publisher(for: .configDidChange)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] notification in
+                self?.handleConfigChanged(notification)
+            }
+            .store(in: &cancellables)
+            
+        Logger.shared.info("AppState: 已设置配置变化通知监听器")
+    }
+    
+    /// 处理配置变化通知
+    /// 当配置发生变化时静默刷新配置列表
+    /// - Parameter notification: 配置变化通知
+    private func handleConfigChanged(_ notification: Notification) {
+        let userInfo = notification.userInfo
+        let operation = userInfo?["operation"] as? String ?? "unknown"
+        let configName = userInfo?["configName"] as? String ?? "unknown"
+        
+        Logger.shared.info("AppState: 收到配置变化通知，操作: \(operation), 配置: \(configName)")
+        
+        // 静默刷新配置列表
+        Task {
+            await loadConfigsSilently()
+            Logger.shared.info("AppState: 配置变化后已静默刷新配置列表")
+        }
     }
     
     /// 处理同步完成通知
@@ -180,8 +215,8 @@ class AppState: ObservableObject {
                 availableConfigs = configs
                 currentConfig = configService.getCurrentConfig()
                 
-                // 更新缓存时间戳
-                lastConfigLoadTime = Date()
+                // 移除缓存时间戳更新，改为完全事件驱动
+                // lastConfigLoadTime = Date()
                 
                 // 清除错误信息
                 errorMessage = nil
@@ -199,30 +234,64 @@ class AppState: ObservableObject {
         await loadConfigsTask?.value
     }
     
-    /// 智能加载配置：只有在缓存过期或从未加载时才重新加载
+    /// 智能加载配置：只在必要时才加载，避免频繁刷新
     func loadConfigsIfNeeded() async {
-        // 如果正在加载中，直接返回
-        guard !isLoading else { return }
-        
-        // 检查是否需要重新加载配置
-        let now = Date()
-        if let lastLoadTime = lastConfigLoadTime,
-           now.timeIntervalSince(lastLoadTime) < configCacheValidityDuration,
-           !availableConfigs.isEmpty {
-            // 缓存仍然有效且有配置数据，无需重新加载
-            print("配置缓存有效，跳过重新加载 (上次加载时间: \(lastLoadTime))")
+        // 只在以下情况才加载：
+        // 1. 配置列表为空（初次启动）
+        // 2. 正在加载中但需要重新加载
+        guard availableConfigs.isEmpty && !isLoading else {
+            print("配置已存在，跳过onAppear刷新")
             return
         }
         
-        // 缓存过期或从未加载，执行加载
-        print("配置缓存过期或未初始化，执行加载")
+        print("配置列表为空，执行初始加载")
         await loadConfigs()
     }
     
     /// 强制刷新配置（用于用户主动刷新）
     func forceRefreshConfigs() async {
-        lastConfigLoadTime = nil // 清除缓存时间戳
+        // 移除缓存清除逻辑，直接加载
         await loadConfigs()
+    }
+    
+    /// 静默加载配置：不显示loading状态，用于配置变化后的自动刷新
+    /// 这个方法专用于事件驱动的刷新，会强制刷新以确保数据最新
+    func loadConfigsSilently() async {
+        // 事件驱动的静默刷新，强制执行以确保配置变化后数据同步
+        print("配置变化触发静默刷新")
+        
+        // 取消之前的加载任务
+        loadConfigsTask?.cancel()
+        
+        loadConfigsTask = Task {
+            // 注意：不设置isLoading = true，保持静默
+            errorMessage = nil
+            
+            do {
+                let configs = try await configService.loadConfigs()
+                
+                // 检查任务是否被取消
+                guard !Task.isCancelled else { return }
+                
+                availableConfigs = configs
+                currentConfig = configService.getCurrentConfig()
+                
+                // 移除缓存时间戳更新，改为完全事件驱动
+                // lastConfigLoadTime = Date()
+                
+                // 清除错误信息
+                errorMessage = nil
+            } catch {
+                // 检查任务是否被取消
+                guard !Task.isCancelled else { return }
+                
+                // 静默模式下不显示错误信息给用户，仅记录日志
+                print("配置静默加载错误: \(error)")
+                Logger.shared.warning("AppState: 配置静默加载失败: \(error)")
+            }
+        }
+        
+        await loadConfigsTask?.value
     }
     
     /// 请求 ~/.claude 目录访问权限

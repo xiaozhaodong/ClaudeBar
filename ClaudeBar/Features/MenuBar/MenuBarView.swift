@@ -35,7 +35,7 @@ struct MenuBarView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .onAppear {
             viewModel.setAppState(appState)
-            // 使用智能加载，避免不必要的刷新
+            // 只在必要时才加载，避免频繁刷新
             Task {
                 await appState.loadConfigsIfNeeded()
             }
