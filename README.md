@@ -83,7 +83,6 @@ ClaudeBar 是一个功能强大的 macOS 菜单栏应用，专为 Claude CLI 用
 3. **进程监控**
 
    - 实时监控 Claude CLI 进程状态
-   - 支持启动、停止、重启操作
 
 ### 配置管理
 
