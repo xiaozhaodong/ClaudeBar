@@ -26,7 +26,7 @@ ClaudeBar 是一个功能强大的 macOS 菜单栏应用，专为 Claude CLI 用
 
 1. 从 [GitHub Releases](https://github.com/xiaozhaodong/ClaudeBar/releases) 下载最新版本
 2. 将 `ClaudeBar.app` 拖拽到 `/Applications` 文件夹
-3. 双击运行应用
+3. 双击运行应用(暂未提供，自行编译先)
 
 ### 方式二：从源码构建
 
